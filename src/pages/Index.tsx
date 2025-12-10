@@ -4,7 +4,6 @@ import { Header } from '@/components/Header';
 import { PortfolioCard } from '@/components/PortfolioCard';
 import { PositionsCard } from '@/components/PositionsCard';
 import { PricesCard } from '@/components/PricesCard';
-import { DayTradingStrategyCard } from '@/components/DayTradingStrategyCard';
 import { TradeCard } from '@/components/TradeCard';
 import { AutoTradingControlCard } from '@/components/AutoTradingControlCard';
 import { OrdersCard } from '@/components/OrdersCard';
@@ -13,7 +12,7 @@ import { TutorialModal } from '@/components/TutorialModal';
 import { AIAnalyzerCard } from '@/components/AIAnalyzerCard';
 import { RealTimePnL } from '@/components/RealTimePnL';
 import { AutoSelectedStocks } from '@/components/orb/AutoSelectedStocks';
-import { RiskSettingsCard } from '@/components/RiskSettingsCard';
+import { ORBStrategyCard } from '@/components/ORBStrategyCard';
 import { useTheme } from '@/hooks/useTheme';
 import { useAuth } from '@/hooks/useAuth';
 import { useTradingConfig } from '@/hooks/useTradingConfig';
@@ -21,7 +20,7 @@ import { useAlpacaData } from '@/hooks/useAlpacaData';
 import { storage } from '@/lib/storage';
 import { AlpacaCredentials } from '@/lib/types';
 import { mockPrices, strategies } from '@/lib/mockData';
-import { dayTradingStrategies, defaultRiskSettings, RiskSettings } from '@/lib/dayTradingStrategies';
+import { defaultRiskSettings, RiskSettings } from '@/lib/dayTradingStrategies';
 import { toast } from '@/hooks/use-toast';
 import { Loader2 } from 'lucide-react';
 
@@ -191,25 +190,20 @@ const Index = () => {
         </div>
 
         {/* Trading Controls Row */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
           <AutoTradingControlCard
             isEnabled={config?.autoTradingEnabled ?? false}
             onToggle={handleToggleAutoTrading}
-            selectedStrategy={config?.selectedStrategy ?? null}
+            selectedStrategy={config?.selectedStrategy ?? 'orb-5min'}
             isConnected={isConnected}
             tradesToday={riskSettings.tradesToday}
             maxTrades={riskSettings.maxTradesPerDay}
             isLocked={riskSettings.isLocked}
           />
-          <DayTradingStrategyCard
-            strategies={dayTradingStrategies}
-            selectedStrategy={config?.selectedStrategy ?? null}
-            onSelectStrategy={handleSelectStrategy}
+          <ORBStrategyCard
             activeORBTickers={activeORBTickers}
-          />
-          <RiskSettingsCard
-            settings={riskSettings}
-            onSettingsChange={handleRiskSettingsChange}
+            riskSettings={riskSettings}
+            onRiskSettingsChange={handleRiskSettingsChange}
           />
         </div>
 

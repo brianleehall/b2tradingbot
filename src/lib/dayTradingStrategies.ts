@@ -69,46 +69,6 @@ export const dayTradingStrategies: DayTradingStrategy[] = [
     },
     timeWindow: '9:30 - 10:30 ET',
     icon: 'breakout'
-  },
-  {
-    id: 'vwap-momentum',
-    name: 'VWAP Momentum Bounce',
-    shortName: 'VWAP',
-    description: 'Enter on pullbacks to VWAP with EMA crossover and volume spike confirmation.',
-    details: [
-      'Wait for price pullback to VWAP from above',
-      'Confirm 9 EMA crossing above 20 EMA',
-      'Enter on volume spike (>150% average)',
-      'Stop loss just below VWAP',
-      'Target: Prior swing high or 3:1 R:R'
-    ],
-    defaultSymbols: ['SPY', 'QQQ', 'AAPL', 'MSFT'],
-    riskParams: {
-      stopLossType: 'Below VWAP',
-      targets: ['Prior swing high', '3:1 R:R']
-    },
-    timeWindow: '9:45 - 3:30 ET',
-    icon: 'vwap'
-  },
-  {
-    id: 'gap-and-go',
-    name: 'Gap & Go',
-    shortName: 'GAP',
-    description: 'Trade high-momentum gap stocks with catalyst confirmation in pre-market.',
-    details: [
-      'Pre-market scan: Gaps > 8%, RVOL > 10',
-      'Must have news catalyst',
-      'Buy first pullback or pre-market high break',
-      'Partial profits: 20%, 40%, trail rest',
-      'Risk: Below pre-market low'
-    ],
-    defaultSymbols: [], // Dynamic from scanner
-    riskParams: {
-      stopLossType: 'Below pre-market low',
-      targets: ['20% partial', '40% partial', 'Trail remainder']
-    },
-    timeWindow: '8:00 - 10:00 ET',
-    icon: 'gap'
   }
 ];
 
