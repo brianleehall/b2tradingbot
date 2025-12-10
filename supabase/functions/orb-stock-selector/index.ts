@@ -344,7 +344,10 @@ serve(async (req) => {
       }
 
       const eodData = await getEODData(symbol, apiKeyId, secretKey);
-      if (!eodData) continue;
+      if (!eodData) {
+        console.log(`  ${symbol}: No EOD data available`);
+        continue;
+      }
 
       const { yesterdayClose, dayBeforeClose, yesterdayVolume, avgVolume30d, tradingDate } = eodData;
       
@@ -359,17 +362,35 @@ serve(async (req) => {
         ? yesterdayVolume / avgVolume30d 
         : 0;
 
+      // Log key stocks for debugging
+      const isKeyStock = ['TSLA', 'AMD', 'SMCI', 'NVDA', 'META'].includes(symbol);
+      if (isKeyStock) {
+        console.log(`  ${symbol}: Close=$${yesterdayClose.toFixed(2)}, Change=${priceChange.toFixed(1)}%, RVOL=${rvol.toFixed(2)}x, AvgVol=${(avgVolume30d/1000000).toFixed(1)}M, Float=${stockFloat}M`);
+      }
+
       // FILTER 2: RVOL ≥ 2.5
-      if (rvol < 2.5) continue;
+      if (rvol < 2.5) {
+        if (isKeyStock) console.log(`    FAIL: RVOL ${rvol.toFixed(2)} < 2.5`);
+        continue;
+      }
 
       // FILTER 3: Price change ≥ ±3%
-      if (Math.abs(priceChange) < 3.0) continue;
+      if (Math.abs(priceChange) < 3.0) {
+        if (isKeyStock) console.log(`    FAIL: Change ${Math.abs(priceChange).toFixed(1)}% < 3%`);
+        continue;
+      }
 
       // FILTER 4: 30-day avg volume ≥ 800,000
-      if (avgVolume30d < 800000) continue;
+      if (avgVolume30d < 800000) {
+        if (isKeyStock) console.log(`    FAIL: AvgVol ${avgVolume30d} < 800K`);
+        continue;
+      }
 
       // FILTER 5: Closing price ≥ $15
-      if (yesterdayClose < 15) continue;
+      if (yesterdayClose < 15) {
+        if (isKeyStock) console.log(`    FAIL: Price $${yesterdayClose.toFixed(2)} < $15`);
+        continue;
+      }
 
       console.log(`✓ ${symbol}: Close=$${yesterdayClose.toFixed(2)}, Change=${priceChange.toFixed(1)}%, RVOL=${rvol.toFixed(1)}x, Float=${stockFloat}M`);
 
