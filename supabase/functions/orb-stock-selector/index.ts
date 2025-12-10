@@ -27,42 +27,65 @@ interface ScanResult {
   scanDate?: string;
 }
 
-// Fallback stocks in order (if fewer than 3 qualify)
+// Curated universe of liquid, high-beta NASDAQ/NYSE stocks
+const SCAN_UNIVERSE = [
+  // Mega caps (high liquidity)
+  'NVDA', 'TSLA', 'AMD', 'AAPL', 'MSFT', 'META', 'GOOGL', 'AMZN', 'NFLX',
+  // High beta / meme stocks
+  'COIN', 'PLTR', 'SOFI', 'RIVN', 'LCID', 'NIO', 'HOOD', 'RBLX', 'SNAP',
+  // Crypto-related
+  'MARA', 'RIOT', 'MSTR', 'BITF', 'HUT', 'CLSK',
+  // AI / Semiconductors
+  'SMCI', 'ARM', 'MU', 'INTC', 'AVGO', 'QCOM', 'AMAT', 'LRCX',
+  // Growth tech
+  'CRWD', 'PANW', 'SNOW', 'DDOG', 'NET', 'ZS', 'OKTA', 'MDB',
+  // EV / Clean energy
+  'XPEV', 'LI', 'ENPH', 'FSLR', 'PLUG', 'CHPT',
+  // E-commerce / Consumer
+  'SHOP', 'UBER', 'ABNB', 'DKNG', 'ROKU', 'ZM', 'PTON', 'ETSY',
+  // Financials
+  'SQ', 'PYPL', 'AFRM', 'UPST',
+  // Biotech (volatile)
+  'MRNA', 'BNTX',
+  // Small cap movers
+  'IONQ', 'RGTI', 'QUBT', 'SOUN', 'GSAT',
+];
+
+// Fallback stocks (proven ORB performers)
 const FALLBACK_STOCKS = ['NVDA', 'TSLA', 'AMD', 'META', 'SMCI'];
+
+// Float data in millions
+const STOCK_FLOAT: Record<string, number> = {
+  'TSLA': 145, 'AMD': 140, 'SMCI': 58, 'ARM': 102, 'COIN': 115, 'PLTR': 140,
+  'MARA': 85, 'RIOT': 95, 'MSTR': 110, 'HUT': 45, 'CLSK': 75, 'BITF': 65,
+  'IONQ': 42, 'RGTI': 35, 'QUBT': 28, 'SOUN': 55, 'GSAT': 80, 'AFRM': 95,
+  'UPST': 78, 'PLUG': 110, 'CHPT': 105, 'SOFI': 98, 'HOOD': 88, 'RIVN': 130,
+  'LCID': 125, 'XPEV': 90, 'LI': 95, 'NIO': 120, 'NVDA': 200, 'META': 200,
+};
 
 // Selection criteria
 const CRITERIA = {
-  MIN_RVOL: 2.5,           // Relative volume ≥ 2.5x yesterday
-  MIN_CHANGE_PCT: 3,       // Absolute % change ≥ 3%
-  MIN_AVG_VOLUME: 800000,  // 30-day avg volume ≥ 800K
-  MIN_PRICE: 15,           // Closing price ≥ $15
-  MAX_FLOAT_MILLIONS: 150, // Float ≤ 150M shares
+  MIN_RVOL: 2.5,
+  MIN_CHANGE_PCT: 3,
+  MIN_AVG_VOLUME: 800000,
+  MIN_PRICE: 15,
+  MAX_FLOAT_MILLIONS: 150,
 };
 
-// Get previous trading day (skip weekends)
+// Get previous trading day
 function getPreviousTradingDay(): string {
   const now = new Date();
   const day = now.getUTCDay();
   let daysBack = 1;
-  
-  // If Monday, go back to Friday
-  if (day === 1) daysBack = 3;
-  // If Sunday, go back to Friday
-  else if (day === 0) daysBack = 2;
+  if (day === 1) daysBack = 3; // Monday -> Friday
+  else if (day === 0) daysBack = 2; // Sunday -> Friday
   
   const prevDay = new Date(now);
   prevDay.setUTCDate(prevDay.getUTCDate() - daysBack);
   return prevDay.toISOString().split('T')[0];
 }
 
-// Get date 35 days ago for 30-day average calculation
-function getStartDate(): string {
-  const date = new Date();
-  date.setUTCDate(date.getUTCDate() - 50);
-  return date.toISOString().split('T')[0];
-}
-
-// Fetch aggregated daily bars from Polygon
+// Fetch daily bars from Polygon with rate limit handling
 async function getPolygonDailyBars(
   symbol: string,
   fromDate: string,
@@ -73,10 +96,16 @@ async function getPolygonDailyBars(
     const url = `https://api.polygon.io/v2/aggs/ticker/${symbol}/range/1/day/${fromDate}/${toDate}?adjusted=true&sort=asc&apiKey=${apiKey}`;
     const response = await fetch(url);
     
-    if (!response.ok) {
-      console.log(`Polygon API error for ${symbol}: ${response.status}`);
-      return null;
+    if (response.status === 429) {
+      // Rate limited - wait and retry once
+      await new Promise(resolve => setTimeout(resolve, 12000));
+      const retryResponse = await fetch(url);
+      if (!retryResponse.ok) return null;
+      const retryData = await retryResponse.json();
+      return retryData.results || null;
     }
+    
+    if (!response.ok) return null;
     
     const data = await response.json();
     return data.results || null;
@@ -86,74 +115,7 @@ async function getPolygonDailyBars(
   }
 }
 
-// Fetch ticker details (for float/shares outstanding)
-async function getPolygonTickerDetails(
-  symbol: string,
-  apiKey: string
-): Promise<{ sharesOutstanding?: number; marketCap?: number } | null> {
-  try {
-    const url = `https://api.polygon.io/v3/reference/tickers/${symbol}?apiKey=${apiKey}`;
-    const response = await fetch(url);
-    
-    if (!response.ok) return null;
-    
-    const data = await response.json();
-    const results = data.results;
-    
-    return {
-      sharesOutstanding: results?.share_class_shares_outstanding || results?.weighted_shares_outstanding,
-      marketCap: results?.market_cap,
-    };
-  } catch (error) {
-    return null;
-  }
-}
-
-// Get all active US tickers from Polygon (NASDAQ/NYSE only)
-async function getActiveUSStocks(apiKey: string): Promise<string[]> {
-  const allTickers: string[] = [];
-  let nextUrl: string | null = `https://api.polygon.io/v3/reference/tickers?market=stocks&active=true&limit=1000&apiKey=${apiKey}`;
-  
-  // Limit to 5 pages to avoid rate limits (5000 stocks)
-  let pageCount = 0;
-  const maxPages = 5;
-  
-  while (nextUrl && pageCount < maxPages) {
-    try {
-      const res: Response = await fetch(nextUrl);
-      if (!res.ok) break;
-      
-      const json: { results?: any[]; next_url?: string } = await res.json();
-      const results = json.results || [];
-      
-      for (const ticker of results) {
-        // Only include NASDAQ and NYSE stocks
-        if (
-          ticker.ticker &&
-          ticker.market === 'stocks' &&
-          (ticker.primary_exchange === 'XNAS' || ticker.primary_exchange === 'XNYS') &&
-          ticker.type === 'CS' // Common stock only
-        ) {
-          allTickers.push(ticker.ticker);
-        }
-      }
-      
-      nextUrl = json.next_url ? `${json.next_url}&apiKey=${apiKey}` : null;
-      pageCount++;
-      
-      // Rate limit delay
-      await new Promise(resolve => setTimeout(resolve, 200));
-    } catch (error) {
-      console.error('Error fetching tickers:', error);
-      break;
-    }
-  }
-  
-  console.log(`Fetched ${allTickers.length} US stocks from Polygon`);
-  return allTickers;
-}
-
-// Get SPY 200-day SMA for market regime
+// Get SPY 200-day SMA
 async function getSPY200SMA(apiKey: string): Promise<{ currentPrice: number; sma200: number } | null> {
   try {
     const toDate = new Date().toISOString().split('T')[0];
@@ -174,23 +136,8 @@ async function getSPY200SMA(apiKey: string): Promise<{ currentPrice: number; sma
   }
 }
 
-// Estimate float in millions
-function estimateFloat(details: { sharesOutstanding?: number; marketCap?: number } | null, price: number): number | null {
-  if (!details) return null;
-  
-  if (details.sharesOutstanding) {
-    return details.sharesOutstanding / 1000000;
-  }
-  
-  if (details.marketCap && price > 0) {
-    return (details.marketCap / price) / 1000000;
-  }
-  
-  return null;
-}
-
 serve(async (req) => {
-  console.log("ORB Stock Selector v4 (Polygon.io) triggered at:", new Date().toISOString());
+  console.log("ORB Stock Selector v5 (Polygon.io curated) triggered at:", new Date().toISOString());
   
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -222,18 +169,14 @@ serve(async (req) => {
       userId = payload.sub;
       
       if (!userId) throw new Error('No user ID in token');
-      if (payload.exp && payload.exp * 1000 < Date.now()) throw new Error('Token expired');
-      
       console.log("User authenticated:", userId);
     } catch (e) {
-      console.error('JWT decode error:', e);
       return new Response(
         JSON.stringify({ error: 'Unauthorized - invalid token' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    // Check if Polygon API key is configured
     if (!polygonApiKey) {
       console.log("No Polygon API key, returning demo data");
       const demoStocks: SelectedStock[] = [
@@ -241,7 +184,6 @@ serve(async (req) => {
         { symbol: 'MARA', priceChange: 6.3, rvol: 3.8, price: 24.50, avgVolume: 18000000, volume: 68400000, float: 85, exchange: 'NASDAQ' },
         { symbol: 'ARM', priceChange: -5.2, rvol: 3.5, price: 142.00, avgVolume: 8500000, volume: 29750000, float: 102, exchange: 'NASDAQ' },
       ];
-
       return new Response(
         JSON.stringify({
           stocks: demoStocks,
@@ -254,109 +196,86 @@ serve(async (req) => {
     }
 
     const scanDate = getPreviousTradingDay();
-    const fromDate = getStartDate();
+    const fromDate = new Date(Date.now() - 50 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
     console.log("=== SCANNING WITH POLYGON.IO EOD DATA ===");
     console.log(`Scan date (previous trading day): ${scanDate}`);
-    console.log(`Criteria: RVOL ≥ ${CRITERIA.MIN_RVOL} | Change ≥ ±${CRITERIA.MIN_CHANGE_PCT}% | AvgVol ≥ ${CRITERIA.MIN_AVG_VOLUME/1000}K | Price ≥ $${CRITERIA.MIN_PRICE} | Float ≤ ${CRITERIA.MAX_FLOAT_MILLIONS}M`);
+    console.log(`Criteria: RVOL ≥ ${CRITERIA.MIN_RVOL} | Change ≥ ±${CRITERIA.MIN_CHANGE_PCT}% | AvgVol ≥ 800K | Price ≥ $${CRITERIA.MIN_PRICE} | Float ≤ ${CRITERIA.MAX_FLOAT_MILLIONS}M`);
 
     // Get SPY 200-SMA for market regime
     const spyData = await getSPY200SMA(polygonApiKey);
     const marketRegime: 'bullish' | 'bearish' = spyData && spyData.currentPrice < spyData.sma200 
       ? 'bearish' 
       : 'bullish';
-    
     console.log(`Market regime: ${marketRegime}`);
-
-    // Get list of all active US stocks
-    const allStocks = await getActiveUSStocks(polygonApiKey);
-    console.log(`Scanning ${allStocks.length} stocks...`);
 
     const qualifiedStocks: SelectedStock[] = [];
 
-    // Process stocks in batches to manage rate limits
-    const batchSize = 50;
-    for (let i = 0; i < Math.min(allStocks.length, 500); i += batchSize) {
-      const batch = allStocks.slice(i, i + batchSize);
+    // Process stocks sequentially to respect rate limits (5 calls/min on free tier)
+    for (const symbol of SCAN_UNIVERSE) {
+      const stockFloat = STOCK_FLOAT[symbol];
       
-      await Promise.all(batch.map(async (symbol) => {
-        try {
-          // Get daily bars for the stock
-          const bars = await getPolygonDailyBars(symbol, fromDate, scanDate, polygonApiKey);
-          if (!bars || bars.length < 2) return;
+      // Skip if float > 150M
+      if (stockFloat && stockFloat > CRITERIA.MAX_FLOAT_MILLIONS) {
+        continue;
+      }
 
-          // Yesterday = most recent bar, Day before = second most recent
-          const yesterdayBar = bars[bars.length - 1];
-          const dayBeforeBar = bars[bars.length - 2];
-          
-          const yesterdayClose = yesterdayBar.c;
-          const yesterdayVolume = yesterdayBar.v;
-          
-          // Calculate 30-day average volume (excluding yesterday)
-          const volumeBars = bars.slice(0, -1).slice(-30);
-          const avgVolume30d = volumeBars.length > 0 
-            ? volumeBars.reduce((sum: number, b: any) => sum + b.v, 0) / volumeBars.length
-            : 0;
+      // Rate limit: wait 12 seconds between calls (5 calls/min)
+      await new Promise(resolve => setTimeout(resolve, 12500));
 
-          // Calculate yesterday's % change
-          const priceChange = dayBeforeBar.c > 0 
-            ? ((yesterdayClose - dayBeforeBar.c) / dayBeforeBar.c) * 100 
-            : 0;
-          
-          // Calculate RVOL
-          const rvol = avgVolume30d > 0 ? yesterdayVolume / avgVolume30d : 0;
+      const bars = await getPolygonDailyBars(symbol, fromDate, scanDate, polygonApiKey);
+      if (!bars || bars.length < 2) {
+        console.log(`  ${symbol}: No data`);
+        continue;
+      }
 
-          // FILTER 1: Price ≥ $15
-          if (yesterdayClose < CRITERIA.MIN_PRICE) return;
+      const yesterdayBar = bars[bars.length - 1];
+      const dayBeforeBar = bars[bars.length - 2];
+      const yesterdayClose = yesterdayBar.c;
+      const yesterdayVolume = yesterdayBar.v;
 
-          // FILTER 2: 30-day avg volume ≥ 800K
-          if (avgVolume30d < CRITERIA.MIN_AVG_VOLUME) return;
+      // Calculate 30-day average volume
+      const volumeBars = bars.slice(0, -1).slice(-30);
+      const avgVolume30d = volumeBars.length > 0 
+        ? volumeBars.reduce((sum: number, b: any) => sum + b.v, 0) / volumeBars.length
+        : 0;
 
-          // FILTER 3: RVOL ≥ 2.5
-          if (rvol < CRITERIA.MIN_RVOL) return;
+      // Calculate metrics
+      const priceChange = dayBeforeBar.c > 0 
+        ? ((yesterdayClose - dayBeforeBar.c) / dayBeforeBar.c) * 100 
+        : 0;
+      const rvol = avgVolume30d > 0 ? yesterdayVolume / avgVolume30d : 0;
 
-          // FILTER 4: Absolute % change ≥ 3%
-          if (Math.abs(priceChange) < CRITERIA.MIN_CHANGE_PCT) return;
+      console.log(`  ${symbol}: $${yesterdayClose.toFixed(2)}, Change=${priceChange.toFixed(1)}%, RVOL=${rvol.toFixed(2)}x`);
 
-          // FILTER 5: Float ≤ 150M (get ticker details)
-          const details = await getPolygonTickerDetails(symbol, polygonApiKey);
-          const floatMillions = estimateFloat(details, yesterdayClose);
-          
-          // If we can't determine float, skip (assume too large)
-          if (floatMillions === null || floatMillions > CRITERIA.MAX_FLOAT_MILLIONS) return;
+      // Apply filters
+      if (yesterdayClose < CRITERIA.MIN_PRICE) continue;
+      if (avgVolume30d < CRITERIA.MIN_AVG_VOLUME) continue;
+      if (rvol < CRITERIA.MIN_RVOL) continue;
+      if (Math.abs(priceChange) < CRITERIA.MIN_CHANGE_PCT) continue;
 
-          // Determine exchange
-          const exchange = details ? 'NASDAQ/NYSE' : 'NASDAQ';
+      console.log(`✓ ${symbol} QUALIFIES!`);
 
-          console.log(`✓ ${symbol}: Close=$${yesterdayClose.toFixed(2)}, Change=${priceChange.toFixed(1)}%, RVOL=${rvol.toFixed(1)}x, Float=${floatMillions.toFixed(0)}M`);
+      qualifiedStocks.push({
+        symbol,
+        priceChange: Math.round(priceChange * 100) / 100,
+        rvol: Math.round(rvol * 100) / 100,
+        price: Math.round(yesterdayClose * 100) / 100,
+        avgVolume: Math.round(avgVolume30d),
+        volume: yesterdayVolume,
+        float: stockFloat,
+        exchange: 'NASDAQ',
+      });
 
-          qualifiedStocks.push({
-            symbol,
-            priceChange: Math.round(priceChange * 100) / 100,
-            rvol: Math.round(rvol * 100) / 100,
-            price: Math.round(yesterdayClose * 100) / 100,
-            avgVolume: Math.round(avgVolume30d),
-            volume: yesterdayVolume,
-            float: Math.round(floatMillions),
-            exchange,
-          });
-        } catch (error) {
-          // Skip stocks that error
-        }
-      }));
-
-      // Rate limit between batches
-      await new Promise(resolve => setTimeout(resolve, 1000));
-      
-      // Early exit if we have enough qualified stocks
-      if (qualifiedStocks.length >= 10) break;
+      // Early exit if we have 6+ qualified stocks
+      if (qualifiedStocks.length >= 6) break;
     }
 
-    // Sort by RVOL (highest first) and take top 6
+    // Sort by RVOL and take top 6
     qualifiedStocks.sort((a, b) => b.rvol - a.rvol);
     let topStocks = qualifiedStocks.slice(0, 6);
 
-    // If fewer than 3 stocks qualify, add fallbacks
+    // Add fallbacks if fewer than 3 stocks qualify
     if (topStocks.length < 3) {
       console.log(`Only ${topStocks.length} stocks qualified, adding fallbacks...`);
       const existingSymbols = new Set(topStocks.map(s => s.symbol));
@@ -365,7 +284,8 @@ serve(async (req) => {
         if (topStocks.length >= 3) break;
         if (existingSymbols.has(fallback)) continue;
         
-        // Fetch fallback stock data
+        await new Promise(resolve => setTimeout(resolve, 12500));
+        
         const bars = await getPolygonDailyBars(fallback, fromDate, scanDate, polygonApiKey);
         if (bars && bars.length >= 2) {
           const yesterdayBar = bars[bars.length - 1];
@@ -389,7 +309,7 @@ serve(async (req) => {
             price: Math.round(yesterdayBar.c * 100) / 100,
             avgVolume: Math.round(avgVolume30d),
             volume: yesterdayBar.v,
-            float: undefined,
+            float: STOCK_FLOAT[fallback],
             exchange: 'NASDAQ',
           });
           existingSymbols.add(fallback);
@@ -398,20 +318,15 @@ serve(async (req) => {
     }
 
     console.log(`=== SCAN COMPLETE ===`);
-    console.log(`Found ${qualifiedStocks.length} stocks meeting ALL criteria`);
+    console.log(`Found ${qualifiedStocks.length} stocks meeting criteria`);
     console.log(`Returning ${topStocks.length}: ${topStocks.map(s => s.symbol).join(', ')}`);
 
     // Save to daily_orb_stocks table
     if (topStocks.length > 0) {
       const todayDate = new Date().toISOString().split('T')[0];
       
-      // Delete existing entries for today first
-      await supabase
-        .from('daily_orb_stocks')
-        .delete()
-        .eq('scan_date', todayDate);
+      await supabase.from('daily_orb_stocks').delete().eq('scan_date', todayDate);
       
-      // Insert new entries
       const insertData = topStocks.map(stock => ({
         scan_date: todayDate,
         symbol: stock.symbol,
@@ -424,14 +339,11 @@ serve(async (req) => {
         exchange: stock.exchange,
       }));
 
-      const { error: insertError } = await supabase
-        .from('daily_orb_stocks')
-        .insert(insertData);
-
+      const { error: insertError } = await supabase.from('daily_orb_stocks').insert(insertData);
       if (insertError) {
         console.error('Error saving to daily_orb_stocks:', insertError);
       } else {
-        console.log(`Saved ${topStocks.length} stocks to daily_orb_stocks table`);
+        console.log(`Saved ${topStocks.length} stocks to daily_orb_stocks`);
       }
     }
 
@@ -445,7 +357,7 @@ serve(async (req) => {
     };
 
     if (topStocks.length === 0) {
-      result.message = "No stocks met all criteria yesterday – waiting for better setups";
+      result.message = "No stocks met all criteria – using fallbacks";
     }
 
     return new Response(
