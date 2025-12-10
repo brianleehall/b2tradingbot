@@ -206,6 +206,45 @@ serve(async (req) => {
         break;
       }
 
+      case 'close_all_positions': {
+        console.log('FLATTEN ALL: Canceling all orders and closing all positions');
+        
+        // Step 1: Cancel all open orders
+        const cancelResponse = await fetch(`${baseUrl}/v2/orders`, { 
+          method: 'DELETE',
+          headers 
+        });
+        
+        if (!cancelResponse.ok) {
+          const error = await cancelResponse.text();
+          console.error('Failed to cancel orders:', error);
+        } else {
+          console.log('All open orders canceled');
+        }
+        
+        // Step 2: Close all positions
+        const closeResponse = await fetch(`${baseUrl}/v2/positions?cancel_orders=true`, { 
+          method: 'DELETE',
+          headers 
+        });
+        
+        if (!closeResponse.ok) {
+          const error = await closeResponse.text();
+          console.error('Failed to close positions:', error);
+          throw new Error(`Failed to close positions: ${error}`);
+        }
+        
+        const closedPositions = await closeResponse.json();
+        console.log('Closed positions:', closedPositions);
+        
+        data = {
+          success: true,
+          message: 'All orders canceled and positions closed',
+          closedCount: Array.isArray(closedPositions) ? closedPositions.length : 0
+        };
+        break;
+      }
+
       default:
         throw new Error('Invalid endpoint');
     }
