@@ -14,6 +14,48 @@ export type Database = {
   }
   public: {
     Tables: {
+      daily_orb_stocks: {
+        Row: {
+          avg_volume: number
+          created_at: string
+          exchange: string
+          float_millions: number | null
+          id: string
+          price: number
+          price_change: number
+          rvol: number
+          scan_date: string
+          symbol: string
+          volume: number
+        }
+        Insert: {
+          avg_volume: number
+          created_at?: string
+          exchange: string
+          float_millions?: number | null
+          id?: string
+          price: number
+          price_change: number
+          rvol: number
+          scan_date: string
+          symbol: string
+          volume: number
+        }
+        Update: {
+          avg_volume?: number
+          created_at?: string
+          exchange?: string
+          float_millions?: number | null
+          id?: string
+          price?: number
+          price_change?: number
+          rvol?: number
+          scan_date?: string
+          symbol?: string
+          volume?: number
+        }
+        Relationships: []
+      }
       profiles: {
         Row: {
           created_at: string
