@@ -16,378 +16,345 @@ interface TradingConfig {
   auto_trading_enabled: boolean;
 }
 
-interface TradeSignal {
-  action: 'BUY' | 'SELL' | 'HOLD';
-  symbol: string;
-  qty: number;
-  entryPrice: number;
-  stopLoss: number;
-  target1: number;
-  target2: number;
-  confidence: number;
-  reason: string;
-}
-
-interface MarketData {
-  price: number;
-  high: number;
-  low: number;
-  volume: number;
-  vwap: number;
-  avgVolume: number;
-}
-
-// Default fallback symbols if user has none selected
-const DEFAULT_ORB_SYMBOLS = ['NVDA', 'TSLA', 'AMD', 'META', 'AAPL', 'SMCI', 'SPY', 'QQQ'];
-
-const strategies: Record<string, { 
-  description: string,
-  type: 'orb' | 'vwap' | 'gap'
-}> = {
-  'orb-5min': {
-    description: '5-Minute Opening Range Breakout - Trade breakouts from first 5-min candle with volume confirmation',
-    type: 'orb'
-  },
-  'vwap-momentum': {
-    description: 'VWAP Momentum Bounce - Enter on pullback to VWAP with EMA crossover confirmation',
-    type: 'vwap'
-  },
-  'gap-and-go': {
-    description: 'Gap & Go - Trade high-momentum gap stocks with catalyst confirmation',
-    type: 'gap'
-  }
+// =====================
+// MAX-GROWTH CONFIGURATION
+// =====================
+const CONFIG = {
+  // Session timing (minutes from midnight ET)
+  ORB_START: 9 * 60 + 30,      // 9:30 AM
+  ORB_END: 9 * 60 + 35,        // 9:35 AM
+  TRADING_START: 9 * 60 + 29,  // 9:29 AM
+  TRADING_END: 10 * 60 + 30,   // 10:30 AM
+  FIRST_FLATTEN: 10 * 60 + 15, // 10:15 AM
+  EXTENDED_END: 11 * 60 + 30,  // 11:30 AM max
+  REENTRY_START: 9 * 60 + 50,  // 9:50 AM
+  REENTRY_END: 10 * 60 + 5,    // 10:05 AM
+  
+  // Risk management
+  TIER1_RISK: 0.02,            // 2% for #1 ranked stock
+  TIER2_RISK: 0.01,            // 1% for #2-4
+  MAX_TRADES_PER_DAY: 3,
+  MAX_DAILY_LOSS_PERCENT: 0.03, // -3% daily stop
+  
+  // Filters
+  VIX_SHORTS_ONLY_THRESHOLD: 25,
+  VIX_DOUBLE_SIZE_THRESHOLD: 18,
+  PREMARKET_COOLOFF_PERCENT: 8,
+  LOW_VOLUME_THRESHOLD: 0.8,
+  PROFIT_EXTENSION_R: 1.5,
+  
+  // Volume confirmation
+  MIN_VOLUME_RATIO: 1.5,
 };
 
-async function getMarketData(
-  symbol: string, 
-  apiKeyId: string, 
-  secretKey: string
-): Promise<MarketData | null> {
-  const dataUrl = 'https://data.alpaca.markets';
-  
+function getETTimeInfo(): { minutes: number; hours: number; mins: number; date: Date } {
+  const now = new Date();
+  const etDate = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const hours = etDate.getHours();
+  const mins = etDate.getMinutes();
+  return { minutes: hours * 60 + mins, hours, mins, date: etDate };
+}
+
+function isWithinTradingWindow(): boolean {
+  const { minutes, date } = getETTimeInfo();
+  const day = date.getDay();
+  if (day === 0 || day === 6) return false;
+  return minutes >= CONFIG.TRADING_START && minutes <= CONFIG.TRADING_END;
+}
+
+// Get combined market regime (SPY 200-SMA + VIX)
+async function getCombinedRegime(apiKeyId: string, secretKey: string): Promise<{
+  spyPrice: number;
+  sma200: number;
+  vixLevel: number;
+  regime: 'bull' | 'elevated_vol' | 'bear';
+  longsAllowed: boolean;
+}> {
   try {
-    // Fetch latest trade
+    const polygonKey = Deno.env.get('POLYGON_API_KEY');
+    
+    // Get SPY current price
     const tradeResponse = await fetch(
-      `${dataUrl}/v2/stocks/${symbol}/trades/latest`,
+      'https://data.alpaca.markets/v2/stocks/SPY/trades/latest',
       {
         headers: {
           'APCA-API-KEY-ID': apiKeyId,
           'APCA-API-SECRET-KEY': secretKey,
-        }
+        },
       }
     );
     
-    // Fetch today's bars for VWAP and range
-    const barsResponse = await fetch(
-      `${dataUrl}/v2/stocks/${symbol}/bars?timeframe=5Min&limit=78`,
-      {
-        headers: {
-          'APCA-API-KEY-ID': apiKeyId,
-          'APCA-API-SECRET-KEY': secretKey,
-        }
-      }
-    );
-
-    if (tradeResponse.ok && barsResponse.ok) {
+    let spyPrice = 0;
+    if (tradeResponse.ok) {
       const tradeData = await tradeResponse.json();
-      const barsData = await barsResponse.json();
+      spyPrice = tradeData.trade?.p || 0;
+    }
+    
+    // Get 200-day SMA from Polygon
+    let sma200 = 0;
+    if (polygonKey) {
+      const endDate = new Date();
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - 300);
       
-      const bars = barsData.bars || [];
-      const price = tradeData.trade?.p || 0;
+      const smaResponse = await fetch(
+        `https://api.polygon.io/v2/aggs/ticker/SPY/range/1/day/${startDate.toISOString().split('T')[0]}/${endDate.toISOString().split('T')[0]}?adjusted=true&sort=desc&limit=200&apiKey=${polygonKey}`
+      );
       
-      // Calculate VWAP
-      let totalVolume = 0;
-      let totalVolumePrice = 0;
-      let dayHigh = 0;
-      let dayLow = Infinity;
-      
-      for (const bar of bars) {
-        const typicalPrice = (bar.h + bar.l + bar.c) / 3;
-        totalVolume += bar.v;
-        totalVolumePrice += typicalPrice * bar.v;
-        dayHigh = Math.max(dayHigh, bar.h);
-        dayLow = Math.min(dayLow, bar.l);
+      if (smaResponse.ok) {
+        const smaData = await smaResponse.json();
+        const bars = smaData.results || [];
+        if (bars.length >= 200) {
+          const sum = bars.slice(0, 200).reduce((acc: number, bar: any) => acc + bar.c, 0);
+          sma200 = sum / 200;
+        } else {
+          sma200 = spyPrice * 0.95;
+        }
       }
-      
-      const vwap = totalVolume > 0 ? totalVolumePrice / totalVolume : price;
-      const avgVolume = bars.length > 0 ? totalVolume / bars.length : 0;
-      const currentVolume = bars.length > 0 ? bars[bars.length - 1]?.v || 0 : 0;
-
-      return {
-        price,
-        high: dayHigh,
-        low: dayLow === Infinity ? price : dayLow,
-        volume: currentVolume,
-        vwap,
-        avgVolume
-      };
+    } else {
+      sma200 = spyPrice * 0.95;
     }
-  } catch (error) {
-    console.error(`Error fetching market data for ${symbol}:`, error);
-  }
-  return null;
-}
-
-async function analyzeORB(
-  symbol: string,
-  data: MarketData,
-  lovableApiKey: string
-): Promise<TradeSignal | null> {
-  try {
-    const volumeRatio = data.avgVolume > 0 ? data.volume / data.avgVolume : 1;
-    const range = data.high - data.low;
-    const rangePercent = (range / data.low) * 100;
     
-    const prompt = `
-Analyze this 5-Minute Opening Range Breakout setup:
-Symbol: ${symbol}
-Current Price: $${data.price.toFixed(2)}
-Opening Range High: $${data.high.toFixed(2)}
-Opening Range Low: $${data.low.toFixed(2)}
-Range Size: ${rangePercent.toFixed(2)}%
-Volume vs Average: ${(volumeRatio * 100).toFixed(0)}%
-VWAP: $${data.vwap.toFixed(2)}
-
-ORB Rules:
-- BUY signal: Price breaks above range high with volume > 150%
-- SELL signal: Price breaks below range low with volume > 150%
-- HOLD if price is within range or volume insufficient
-
-Calculate position size for 1% account risk, stop at opposite range extreme.
-Targets: 2:1 and 3:1 risk/reward.
-`;
-
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${lovableApiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          {
-            role: "system",
-            content: `You are a professional day trader analyzing ORB setups. Output ONLY valid JSON:
-{
-  "action": "BUY" | "SELL" | "HOLD",
-  "confidence": 1-10,
-  "qty": number (1-100 shares),
-  "stopLoss": number (price),
-  "target1": number (2:1 R:R price),
-  "target2": number (3:1 R:R price),
-  "reason": "brief 1-line explanation"
-}`
+    // Get VIX level
+    let vixLevel = 20;
+    try {
+      const vixResponse = await fetch(
+        'https://data.alpaca.markets/v2/stocks/VIX/trades/latest',
+        {
+          headers: {
+            'APCA-API-KEY-ID': apiKeyId,
+            'APCA-API-SECRET-KEY': secretKey,
           },
-          { role: "user", content: prompt }
-        ],
-      }),
-    });
-
-    if (!response.ok) {
-      console.error("AI gateway error:", response.status);
-      return null;
+        }
+      );
+      if (vixResponse.ok) {
+        const vixData = await vixResponse.json();
+        vixLevel = vixData.trade?.p || 20;
+      }
+    } catch {
+      console.log('VIX fetch failed, using default 20');
     }
-
-    const aiData = await response.json();
-    const content = aiData.choices?.[0]?.message?.content;
     
-    if (!content) return null;
-
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return null;
+    // Combined regime decision
+    const spyAboveSMA = spyPrice > sma200;
+    const vixLow = vixLevel <= CONFIG.VIX_SHORTS_ONLY_THRESHOLD;
     
-    const signal = JSON.parse(jsonMatch[0]);
-    return {
-      action: signal.action,
-      symbol,
-      qty: signal.qty || 10,
-      entryPrice: data.price,
-      stopLoss: signal.stopLoss || data.low,
-      target1: signal.target1 || data.price * 1.02,
-      target2: signal.target2 || data.price * 1.03,
-      confidence: signal.confidence || 5,
-      reason: signal.reason || 'ORB analysis'
-    };
+    let regime: 'bull' | 'elevated_vol' | 'bear';
+    let longsAllowed: boolean;
+    
+    if (spyAboveSMA && vixLow) {
+      regime = 'bull';
+      longsAllowed = true;
+    } else if (spyAboveSMA && !vixLow) {
+      regime = 'elevated_vol';
+      longsAllowed = false;
+    } else {
+      regime = 'bear';
+      longsAllowed = false;
+    }
+    
+    console.log(`[REGIME] SPY: $${spyPrice.toFixed(2)}, 200-SMA: $${sma200.toFixed(2)}, VIX: ${vixLevel.toFixed(1)} → ${regime.toUpperCase()} (Longs: ${longsAllowed ? 'YES' : 'NO'})`);
+    
+    return { spyPrice, sma200, vixLevel, regime, longsAllowed };
   } catch (error) {
-    console.error("Error analyzing ORB:", error);
-    return null;
+    console.error('Error fetching regime:', error);
+    return { spyPrice: 0, sma200: 0, vixLevel: 20, regime: 'bull', longsAllowed: true };
   }
 }
 
-async function analyzeVWAP(
-  symbol: string,
-  data: MarketData,
-  lovableApiKey: string
-): Promise<TradeSignal | null> {
+// Get ORB range (first 5-min candle)
+async function getORBRange(ticker: string, apiKeyId: string, secretKey: string): Promise<{ high: number; low: number } | null> {
   try {
-    const priceVsVwap = ((data.price - data.vwap) / data.vwap) * 100;
-    const volumeRatio = data.avgVolume > 0 ? data.volume / data.avgVolume : 1;
+    const now = new Date();
+    const etDate = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const dateStr = etDate.toISOString().split('T')[0];
     
-    const prompt = `
-Analyze this VWAP Momentum Bounce setup:
-Symbol: ${symbol}
-Current Price: $${data.price.toFixed(2)}
-VWAP: $${data.vwap.toFixed(2)}
-Price vs VWAP: ${priceVsVwap.toFixed(2)}%
-Volume vs Average: ${(volumeRatio * 100).toFixed(0)}%
-Day High: $${data.high.toFixed(2)}
-Day Low: $${data.low.toFixed(2)}
-
-VWAP Bounce Rules:
-- BUY: Price pulled back to VWAP from above, 9 EMA > 20 EMA, volume spike
-- Stop: Just below VWAP
-- Target: Prior swing high or 3:1 R:R
-- HOLD if conditions not met
-`;
-
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${lovableApiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          {
-            role: "system",
-            content: `You are a professional day trader analyzing VWAP bounce setups. Output ONLY valid JSON:
-{
-  "action": "BUY" | "SELL" | "HOLD",
-  "confidence": 1-10,
-  "qty": number (1-100 shares),
-  "stopLoss": number (just below VWAP),
-  "target1": number (swing high),
-  "target2": number (3:1 R:R),
-  "reason": "brief 1-line explanation"
-}`
-          },
-          { role: "user", content: prompt }
-        ],
-      }),
-    });
-
+    const response = await fetch(
+      `https://data.alpaca.markets/v2/stocks/${ticker}/bars?timeframe=5Min&start=${dateStr}T09:30:00-05:00&end=${dateStr}T09:35:00-05:00&limit=1`,
+      {
+        headers: {
+          'APCA-API-KEY-ID': apiKeyId,
+          'APCA-API-SECRET-KEY': secretKey,
+        },
+      }
+    );
+    
     if (!response.ok) return null;
-
-    const aiData = await response.json();
-    const content = aiData.choices?.[0]?.message?.content;
+    const data = await response.json();
+    const bars = data.bars;
     
-    if (!content) return null;
-
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return null;
-    
-    const signal = JSON.parse(jsonMatch[0]);
-    return {
-      action: signal.action,
-      symbol,
-      qty: signal.qty || 10,
-      entryPrice: data.price,
-      stopLoss: signal.stopLoss || data.vwap * 0.998,
-      target1: signal.target1 || data.high,
-      target2: signal.target2 || data.price * 1.03,
-      confidence: signal.confidence || 5,
-      reason: signal.reason || 'VWAP bounce analysis'
-    };
-  } catch (error) {
-    console.error("Error analyzing VWAP:", error);
+    if (!bars || bars.length === 0) return null;
+    return { high: bars[0].h, low: bars[0].l };
+  } catch {
     return null;
   }
 }
 
-async function analyzeGapAndGo(
-  symbol: string,
-  data: MarketData,
-  lovableApiKey: string
-): Promise<TradeSignal | null> {
+// Get pre-market change (cool-off rule)
+async function getPremarketChange(ticker: string, apiKeyId: string, secretKey: string): Promise<number> {
   try {
-    const prompt = `
-Analyze this Gap & Go setup:
-Symbol: ${symbol}
-Current Price: $${data.price.toFixed(2)}
-Pre-market High: $${data.high.toFixed(2)}
-Pre-market Low: $${data.low.toFixed(2)}
-VWAP: $${data.vwap.toFixed(2)}
-Volume vs Average: ${(data.avgVolume > 0 ? (data.volume / data.avgVolume) * 100 : 100).toFixed(0)}%
-
-Gap & Go Rules:
-- BUY: First pullback hold or pre-market high breakout
-- Risk: Below pre-market low
-- Partial profits: 20% at first target, 40% at second, trail rest
-`;
-
-    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${lovableApiKey}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        model: "google/gemini-2.5-flash",
-        messages: [
-          {
-            role: "system",
-            content: `You are a professional day trader analyzing Gap & Go setups. Output ONLY valid JSON:
-{
-  "action": "BUY" | "SELL" | "HOLD",
-  "confidence": 1-10,
-  "qty": number (1-100 shares),
-  "stopLoss": number (below pre-market low),
-  "target1": number (20% profit target),
-  "target2": number (40% profit target),
-  "reason": "brief 1-line explanation"
-}`
-          },
-          { role: "user", content: prompt }
-        ],
-      }),
-    });
-
-    if (!response.ok) return null;
-
-    const aiData = await response.json();
-    const content = aiData.choices?.[0]?.message?.content;
+    const now = new Date();
+    const etDate = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    const dateStr = etDate.toISOString().split('T')[0];
     
-    if (!content) return null;
-
-    const jsonMatch = content.match(/\{[\s\S]*\}/);
-    if (!jsonMatch) return null;
+    // Get yesterday's close
+    const closeResponse = await fetch(
+      `https://data.alpaca.markets/v2/stocks/${ticker}/bars?timeframe=1Day&limit=2`,
+      {
+        headers: {
+          'APCA-API-KEY-ID': apiKeyId,
+          'APCA-API-SECRET-KEY': secretKey,
+        },
+      }
+    );
     
-    const signal = JSON.parse(jsonMatch[0]);
-    return {
-      action: signal.action,
-      symbol,
-      qty: signal.qty || 10,
-      entryPrice: data.price,
-      stopLoss: signal.stopLoss || data.low * 0.99,
-      target1: signal.target1 || data.price * 1.002,
-      target2: signal.target2 || data.price * 1.004,
-      confidence: signal.confidence || 5,
-      reason: signal.reason || 'Gap & Go analysis'
-    };
-  } catch (error) {
-    console.error("Error analyzing Gap & Go:", error);
+    if (!closeResponse.ok) return 0;
+    const closeData = await closeResponse.json();
+    const closeBars = closeData.bars || [];
+    if (closeBars.length < 2) return 0;
+    
+    const prevClose = closeBars[closeBars.length - 2].c;
+    
+    // Get pre-market price
+    const preResponse = await fetch(
+      `https://data.alpaca.markets/v2/stocks/${ticker}/trades/latest`,
+      {
+        headers: {
+          'APCA-API-KEY-ID': apiKeyId,
+          'APCA-API-SECRET-KEY': secretKey,
+        },
+      }
+    );
+    
+    if (!preResponse.ok) return 0;
+    const preData = await preResponse.json();
+    const currentPrice = preData.trade?.p || prevClose;
+    
+    return prevClose > 0 ? ((currentPrice - prevClose) / prevClose) * 100 : 0;
+  } catch {
+    return 0;
+  }
+}
+
+// Get current market data
+async function getMarketData(ticker: string, apiKeyId: string, secretKey: string): Promise<{
+  price: number;
+  volume: number;
+  avgVolume: number;
+} | null> {
+  try {
+    const tradeResponse = await fetch(
+      `https://data.alpaca.markets/v2/stocks/${ticker}/trades/latest`,
+      {
+        headers: {
+          'APCA-API-KEY-ID': apiKeyId,
+          'APCA-API-SECRET-KEY': secretKey,
+        },
+      }
+    );
+    
+    const barsResponse = await fetch(
+      `https://data.alpaca.markets/v2/stocks/${ticker}/bars?timeframe=1Min&limit=20`,
+      {
+        headers: {
+          'APCA-API-KEY-ID': apiKeyId,
+          'APCA-API-SECRET-KEY': secretKey,
+        },
+      }
+    );
+    
+    if (!tradeResponse.ok || !barsResponse.ok) return null;
+    
+    const tradeData = await tradeResponse.json();
+    const barsData = await barsResponse.json();
+    
+    const bars = barsData.bars || [];
+    const price = tradeData.trade?.p || 0;
+    const volume = bars.length > 0 ? bars[bars.length - 1]?.v || 0 : 0;
+    const avgVolume = bars.length > 0 
+      ? bars.reduce((sum: number, b: any) => sum + b.v, 0) / bars.length 
+      : volume;
+    
+    return { price, volume, avgVolume };
+  } catch {
     return null;
   }
 }
 
+// Check ORB breakout signal with all filters
+function checkORBSignal(
+  orbHigh: number,
+  orbLow: number,
+  currentPrice: number,
+  volume: number,
+  avgVolume: number,
+  premarketChange: number,
+  longsAllowed: boolean,
+  regime: string
+): { signal: 'long' | 'short' | null; skipReason?: string } {
+  // Cool-off rule
+  if (Math.abs(premarketChange) > CONFIG.PREMARKET_COOLOFF_PERCENT) {
+    return { signal: null, skipReason: `Pre-market ${premarketChange.toFixed(1)}% > 8% cool-off limit` };
+  }
+  
+  const volumeRatio = avgVolume > 0 ? volume / avgVolume : 1;
+  const volumeCondition = volumeRatio >= CONFIG.MIN_VOLUME_RATIO;
+  
+  // Long breakout
+  if (currentPrice > orbHigh && volumeCondition) {
+    if (!longsAllowed) {
+      return { signal: null, skipReason: `${regime} regime - shorts only` };
+    }
+    return { signal: 'long' };
+  }
+  
+  // Short breakout
+  if (currentPrice < orbLow && volumeCondition) {
+    return { signal: 'short' };
+  }
+  
+  return { signal: null, skipReason: 'No breakout signal' };
+}
+
+// Calculate tiered position size
+function calculatePositionSize(
+  equity: number,
+  entryPrice: number,
+  stopLoss: number,
+  rank: number,
+  vixLevel: number
+): { shares: number; riskPercent: number } {
+  let riskPercent = rank === 1 ? CONFIG.TIER1_RISK : CONFIG.TIER2_RISK;
+  
+  // VIX double size on #1 if VIX < 18
+  if (rank === 1 && vixLevel < CONFIG.VIX_DOUBLE_SIZE_THRESHOLD) {
+    riskPercent *= 2;
+    console.log(`VIX ${vixLevel.toFixed(1)} < 18 - Doubling position size on #1`);
+  }
+  
+  const maxRisk = equity * riskPercent;
+  const riskPerShare = Math.abs(entryPrice - stopLoss);
+  
+  if (riskPerShare <= 0) return { shares: 0, riskPercent };
+  
+  const shares = Math.floor(maxRisk / riskPerShare);
+  return { shares: Math.max(1, shares), riskPercent };
+}
+
+// Execute trade with bracket order
 async function executeTrade(
-  signal: TradeSignal,
+  ticker: string,
+  side: 'buy' | 'sell',
+  qty: number,
+  stopLoss: number,
+  target: number,
   apiKeyId: string,
   secretKey: string,
   isPaper: boolean
 ): Promise<{ success: boolean; orderId?: string; error?: string }> {
-  if (signal.action === 'HOLD' || signal.confidence < 7) {
-    return { success: false, error: 'Signal below confidence threshold or HOLD' };
-  }
-
-  const baseUrl = isPaper 
-    ? 'https://paper-api.alpaca.markets'
-    : 'https://api.alpaca.markets';
-
+  const baseUrl = isPaper ? 'https://paper-api.alpaca.markets' : 'https://api.alpaca.markets';
+  
   try {
-    // Place bracket order with stop loss and take profit
     const response = await fetch(`${baseUrl}/v2/orders`, {
       method: 'POST',
       headers: {
@@ -396,52 +363,76 @@ async function executeTrade(
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        symbol: signal.symbol,
-        qty: signal.qty.toString(),
-        side: signal.action.toLowerCase(),
+        symbol: ticker,
+        qty: qty.toString(),
+        side,
         type: 'market',
         time_in_force: 'day',
         order_class: 'bracket',
-        stop_loss: {
-          stop_price: signal.stopLoss.toFixed(2)
-        },
-        take_profit: {
-          limit_price: signal.target1.toFixed(2)
-        }
+        stop_loss: { stop_price: stopLoss.toFixed(2) },
+        take_profit: { limit_price: target.toFixed(2) },
       }),
     });
-
+    
     if (!response.ok) {
       const error = await response.text();
-      console.error("Order error:", error);
       return { success: false, error };
     }
-
+    
     const order = await response.json();
-    console.log(`Bracket order placed: ${order.id} - ${signal.action} ${signal.qty} ${signal.symbol}`);
     return { success: true, orderId: order.id };
   } catch (error) {
-    console.error("Trade execution error:", error);
-    return { success: false, error: error instanceof Error ? error.message : 'Unknown error' };
+    return { success: false, error: String(error) };
   }
 }
 
-// Check if within ORB trading window (9:29 AM - 10:30 AM ET)
-function isWithinTradingWindow(): boolean {
-  const now = new Date();
-  // Convert to ET
-  const etTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-  const day = etTime.getDay();
+// Get account info (equity, trades today, daily P&L)
+async function getAccountInfo(apiKeyId: string, secretKey: string, isPaper: boolean): Promise<{
+  equity: number;
+  tradesToday: number;
+  dailyPnLPercent: number;
+} | null> {
+  const baseUrl = isPaper ? 'https://paper-api.alpaca.markets' : 'https://api.alpaca.markets';
   
-  // No trading on weekends
-  if (day === 0 || day === 6) return false;
-  
-  const hours = etTime.getHours();
-  const minutes = etTime.getMinutes();
-  const timeInMinutes = hours * 60 + minutes;
-  
-  // Trading window: 9:29 AM - 10:30 AM ET (569 - 630 minutes)
-  return timeInMinutes >= 569 && timeInMinutes <= 630;
+  try {
+    const accountResponse = await fetch(`${baseUrl}/v2/account`, {
+      headers: {
+        'APCA-API-KEY-ID': apiKeyId,
+        'APCA-API-SECRET-KEY': secretKey,
+      },
+    });
+    
+    if (!accountResponse.ok) return null;
+    const account = await accountResponse.json();
+    
+    const equity = parseFloat(account.equity);
+    const lastEquity = parseFloat(account.last_equity);
+    const dailyPnLPercent = lastEquity > 0 ? ((equity - lastEquity) / lastEquity) * 100 : 0;
+    
+    // Count today's trades
+    const ordersResponse = await fetch(
+      `${baseUrl}/v2/orders?status=all&limit=100`,
+      {
+        headers: {
+          'APCA-API-KEY-ID': apiKeyId,
+          'APCA-API-SECRET-KEY': secretKey,
+        },
+      }
+    );
+    
+    let tradesToday = 0;
+    if (ordersResponse.ok) {
+      const orders = await ordersResponse.json();
+      const today = new Date().toISOString().split('T')[0];
+      tradesToday = orders.filter((o: any) => 
+        o.filled_at && o.filled_at.startsWith(today)
+      ).length;
+    }
+    
+    return { equity, tradesToday, dailyPnLPercent };
+  } catch {
+    return null;
+  }
 }
 
 serve(async (req) => {
@@ -449,18 +440,14 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
-  console.log("Day trading auto-trade triggered at:", new Date().toISOString());
+  const timeInfo = getETTimeInfo();
+  console.log(`[AUTO-TRADE] Triggered at ${timeInfo.hours}:${timeInfo.mins.toString().padStart(2, '0')} ET`);
 
-  // CRITICAL: Check trading window FIRST
+  // Check trading window
   if (!isWithinTradingWindow()) {
-    const now = new Date();
-    const etTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-    console.log(`Outside ORB trading window (9:29-10:30 AM ET). Current ET time: ${etTime.toLocaleTimeString()}`);
+    console.log('Outside ORB trading window (9:29-10:30 AM ET)');
     return new Response(
-      JSON.stringify({ 
-        message: "Outside ORB trading window (9:29 AM - 10:30 AM ET)", 
-        currentTimeET: etTime.toLocaleTimeString() 
-      }),
+      JSON.stringify({ message: 'Outside trading window', timeET: `${timeInfo.hours}:${timeInfo.mins}` }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
@@ -468,131 +455,166 @@ serve(async (req) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const lovableApiKey = Deno.env.get('LOVABLE_API_KEY')!;
-
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Fetch all users with auto-trading enabled using the secure decryption function
-    const { data: configs, error: configError } = await supabase
-      .rpc('get_active_trading_configs');
-
-    if (configError) {
-      console.error("Error fetching configs:", configError);
-      throw configError;
-    }
-
-    if (!configs || configs.length === 0) {
-      console.log("No users with auto-trading enabled");
+    // Get active trading configs
+    const { data: configs, error } = await supabase.rpc('get_active_trading_configs');
+    
+    if (error || !configs || configs.length === 0) {
+      console.log('No active auto-traders');
       return new Response(
-        JSON.stringify({ message: "No active auto-traders" }),
+        JSON.stringify({ message: 'No active auto-traders' }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
     console.log(`Processing ${configs.length} auto-trading configurations`);
-
     const results = [];
 
     for (const config of configs as TradingConfig[]) {
-      console.log(`Processing user ${config.user_id} with strategy ${config.selected_strategy}`);
+      console.log(`\n=== Processing user ${config.user_id} ===`);
       
-      const strategy = strategies[config.selected_strategy];
-      if (!strategy) {
-        console.log(`Unknown strategy: ${config.selected_strategy}`);
+      // Get account info
+      const accountInfo = await getAccountInfo(
+        config.api_key_id, 
+        config.secret_key, 
+        config.is_paper_trading
+      );
+      
+      if (!accountInfo) {
+        console.log('Failed to get account info');
+        continue;
+      }
+      
+      // Check daily loss limit
+      if (accountInfo.dailyPnLPercent <= -(CONFIG.MAX_DAILY_LOSS_PERCENT * 100)) {
+        console.log(`Daily loss limit hit: ${accountInfo.dailyPnLPercent.toFixed(2)}%`);
+        continue;
+      }
+      
+      // Check max trades per day
+      if (accountInfo.tradesToday >= CONFIG.MAX_TRADES_PER_DAY) {
+        console.log(`Max trades reached: ${accountInfo.tradesToday}/${CONFIG.MAX_TRADES_PER_DAY}`);
         continue;
       }
 
-      // Fetch user's selected tickers from database
-      let symbols: string[] = DEFAULT_ORB_SYMBOLS;
+      // Get market regime
+      const regimeData = await getCombinedRegime(config.api_key_id, config.secret_key);
       
-      if (strategy.type === 'orb') {
-        const { data: userTickers } = await supabase
-          .rpc('get_user_orb_tickers', { p_user_id: config.user_id });
+      // Get user's selected tickers
+      const { data: userTickers } = await supabase.rpc('get_user_orb_tickers', { p_user_id: config.user_id });
+      const tickers = userTickers && userTickers.length > 0 ? userTickers : ['NVDA', 'TSLA'];
+      
+      console.log(`Tickers: ${tickers.join(', ')}`);
+      
+      // Process each ticker by rank
+      for (let i = 0; i < tickers.length && accountInfo.tradesToday + i < CONFIG.MAX_TRADES_PER_DAY; i++) {
+        const ticker = tickers[i];
+        const rank = i + 1;
         
-        if (userTickers && userTickers.length > 0) {
-          symbols = userTickers;
-          console.log(`Using user-selected tickers for ${config.user_id}:`, symbols);
-        } else {
-          console.log(`No user tickers found, using defaults for ${config.user_id}`);
+        // Get ORB range
+        const orbRange = await getORBRange(ticker, config.api_key_id, config.secret_key);
+        if (!orbRange) {
+          console.log(`[${ticker}] No ORB range`);
+          continue;
         }
-      }
-
-      for (const symbol of symbols) {
-        try {
-          // Get current market data
-          const marketData = await getMarketData(
-            symbol, 
-            config.api_key_id, 
-            config.secret_key
-          );
-
-          if (!marketData) {
-            console.log(`Could not get market data for ${symbol}`);
-            continue;
-          }
-
-          console.log(`${symbol} price: $${marketData.price}, VWAP: $${marketData.vwap}`);
-
-          // Analyze based on strategy type
-          let signal: TradeSignal | null = null;
-          
-          switch (strategy.type) {
-            case 'orb':
-              signal = await analyzeORB(symbol, marketData, lovableApiKey);
-              break;
-            case 'vwap':
-              signal = await analyzeVWAP(symbol, marketData, lovableApiKey);
-              break;
-            case 'gap':
-              signal = await analyzeGapAndGo(symbol, marketData, lovableApiKey);
-              break;
-          }
-          
-          if (!signal) {
-            console.log(`No signal generated for ${symbol}`);
-            continue;
-          }
-
-          console.log(`Signal for ${symbol}:`, signal);
-
-          // Execute trade if confidence is high enough
-          const result = await executeTrade(
-            signal,
-            config.api_key_id,
-            config.secret_key,
-            config.is_paper_trading
-          );
-
-          // Log the trade
-          await supabase.from('trade_logs').insert({
-            user_id: config.user_id,
-            symbol: signal.symbol,
-            side: signal.action.toLowerCase(),
-            qty: signal.qty,
-            price: signal.entryPrice,
-            strategy: config.selected_strategy,
-            status: result.success ? 'success' : 'failed',
-            error_message: result.error || null,
-          });
-
-          results.push({
-            userId: config.user_id,
-            symbol,
-            signal: signal.action,
-            confidence: signal.confidence,
-            stopLoss: signal.stopLoss,
-            target1: signal.target1,
-            executed: result.success,
-            reason: signal.reason
-          });
-
-        } catch (error) {
-          console.error(`Error processing ${symbol} for user ${config.user_id}:`, error);
+        
+        // Get market data
+        const marketData = await getMarketData(ticker, config.api_key_id, config.secret_key);
+        if (!marketData) {
+          console.log(`[${ticker}] No market data`);
+          continue;
+        }
+        
+        // Get pre-market change
+        const premarketChange = await getPremarketChange(ticker, config.api_key_id, config.secret_key);
+        
+        // Check for signal
+        const { signal, skipReason } = checkORBSignal(
+          orbRange.high,
+          orbRange.low,
+          marketData.price,
+          marketData.volume,
+          marketData.avgVolume,
+          premarketChange,
+          regimeData.longsAllowed,
+          regimeData.regime
+        );
+        
+        if (!signal) {
+          console.log(`[${ticker}] Skip: ${skipReason}`);
+          continue;
+        }
+        
+        // Calculate position size
+        const stopLoss = signal === 'long' ? orbRange.low : orbRange.high;
+        const orbHeight = orbRange.high - orbRange.low;
+        const target = signal === 'long' 
+          ? marketData.price + (2 * orbHeight)
+          : marketData.price - (2 * orbHeight);
+        
+        const { shares, riskPercent } = calculatePositionSize(
+          accountInfo.equity,
+          marketData.price,
+          stopLoss,
+          rank,
+          regimeData.vixLevel
+        );
+        
+        if (shares <= 0) {
+          console.log(`[${ticker}] Position size 0`);
+          continue;
+        }
+        
+        console.log(`[${ticker}] SIGNAL: ${signal.toUpperCase()} @ $${marketData.price.toFixed(2)}, ${shares} shares, Risk: ${(riskPercent * 100).toFixed(1)}%`);
+        
+        // Execute trade
+        const result = await executeTrade(
+          ticker,
+          signal === 'long' ? 'buy' : 'sell',
+          shares,
+          stopLoss,
+          target,
+          config.api_key_id,
+          config.secret_key,
+          config.is_paper_trading
+        );
+        
+        // Log trade
+        await supabase.from('trade_logs').insert({
+          user_id: config.user_id,
+          symbol: ticker,
+          side: signal === 'long' ? 'buy' : 'sell',
+          qty: shares,
+          price: marketData.price,
+          strategy: 'orb-max-growth',
+          status: result.success ? 'success' : 'failed',
+          error_message: result.error || null,
+        });
+        
+        results.push({
+          userId: config.user_id,
+          ticker,
+          signal,
+          shares,
+          price: marketData.price,
+          stopLoss,
+          target,
+          riskPercent,
+          regime: regimeData.regime,
+          executed: result.success,
+          error: result.error,
+        });
+        
+        if (result.success) {
+          console.log(`[${ticker}] ORDER FILLED: ${result.orderId}`);
+        } else {
+          console.log(`[${ticker}] ORDER FAILED: ${result.error}`);
         }
       }
     }
 
-    console.log("Day trading auto-trade completed. Results:", results);
+    console.log(`\n=== AUTO-TRADE COMPLETE: ${results.length} signals processed ===`);
 
     return new Response(
       JSON.stringify({ success: true, results }),
@@ -600,7 +622,7 @@ serve(async (req) => {
     );
 
   } catch (error) {
-    console.error("Auto-trade error:", error);
+    console.error('Auto-trade error:', error);
     return new Response(
       JSON.stringify({ error: error instanceof Error ? error.message : 'Unknown error' }),
       { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
