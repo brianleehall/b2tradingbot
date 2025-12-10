@@ -1,4 +1,4 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap');
 
 @tailwind base;
 @tailwind components;
@@ -6,87 +6,48 @@
 
 @layer base {
   :root {
-    --background: 220 20% 97%;
-    --foreground: 220 20% 10%;
-
-    --card: 0 0% 100%;
-    --card-foreground: 220 20% 10%;
-
+    --background: 0 0% 100%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 98%;
+    --card-foreground: 222 47% 11%;
     --popover: 0 0% 100%;
-    --popover-foreground: 220 20% 10%;
-
-    --primary: 173 80% 40%;
+    --popover-foreground: 222 47% 11%;
+    --primary: 142 76% 36%;
     --primary-foreground: 0 0% 100%;
-
-    --secondary: 220 15% 92%;
-    --secondary-foreground: 220 20% 20%;
-
-    --muted: 220 15% 95%;
-    --muted-foreground: 220 10% 45%;
-
-    --accent: 173 80% 40%;
-    --accent-foreground: 0 0% 100%;
-
-    --destructive: 0 72% 51%;
+    --secondary: 210 40% 96%;
+    --secondary-foreground: 222 47% 11%;
+    --muted: 210 40% 96%;
+    --muted-foreground: 215 16% 47%;
+    --accent: 210 40% 96%;
+    --accent-foreground: 222 47% 11%;
+    --destructive: 0 84% 60%;
     --destructive-foreground: 0 0% 100%;
-
-    --success: 142 76% 36%;
-    --success-foreground: 0 0% 100%;
-
-    --warning: 38 92% 50%;
-    --warning-foreground: 0 0% 100%;
-
-    --border: 220 15% 90%;
-    --input: 220 15% 90%;
-    --ring: 173 80% 40%;
-
+    --border: 214 32% 91%;
+    --input: 214 32% 91%;
+    --ring: 142 76% 36%;
     --radius: 0.75rem;
-
-    --chart-up: 142 76% 36%;
-    --chart-down: 0 72% 51%;
-
-    --glow-primary: 173 80% 40%;
   }
 
   .dark {
     --background: 222 47% 6%;
     --foreground: 210 40% 98%;
-
     --card: 222 47% 8%;
     --card-foreground: 210 40% 98%;
-
     --popover: 222 47% 8%;
     --popover-foreground: 210 40% 98%;
-
-    --primary: 173 80% 50%;
+    --primary: 142 76% 45%;
     --primary-foreground: 222 47% 6%;
-
-    --secondary: 222 30% 14%;
-    --secondary-foreground: 210 40% 90%;
-
-    --muted: 222 30% 12%;
+    --secondary: 217 33% 17%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217 33% 17%;
     --muted-foreground: 215 20% 55%;
-
-    --accent: 173 80% 50%;
-    --accent-foreground: 222 47% 6%;
-
-    --destructive: 0 72% 51%;
+    --accent: 217 33% 17%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 62% 50%;
     --destructive-foreground: 0 0% 100%;
-
-    --success: 142 76% 45%;
-    --success-foreground: 0 0% 100%;
-
-    --warning: 38 92% 50%;
-    --warning-foreground: 0 0% 10%;
-
-    --border: 222 30% 18%;
-    --input: 222 30% 18%;
-    --ring: 173 80% 50%;
-
-    --chart-up: 142 76% 45%;
-    --chart-down: 0 72% 51%;
-
-    --glow-primary: 173 80% 50%;
+    --border: 217 33% 17%;
+    --input: 217 33% 17%;
+    --ring: 142 76% 45%;
   }
 }
 
@@ -94,63 +55,11 @@
   * {
     @apply border-border;
   }
-
   body {
     @apply bg-background text-foreground antialiased;
-    font-family: 'Inter', sans-serif;
+    font-family: 'Inter', system-ui, sans-serif;
   }
-
   .font-mono {
     font-family: 'JetBrains Mono', monospace;
-  }
-}
-
-@layer utilities {
-  .glow-primary {
-    box-shadow: 0 0 20px hsl(var(--glow-primary) / 0.3),
-                0 0 40px hsl(var(--glow-primary) / 0.1);
-  }
-
-  .glow-success {
-    box-shadow: 0 0 20px hsl(var(--success) / 0.3),
-                0 0 40px hsl(var(--success) / 0.1);
-  }
-
-  .glow-destructive {
-    box-shadow: 0 0 20px hsl(var(--destructive) / 0.3),
-                0 0 40px hsl(var(--destructive) / 0.1);
-  }
-
-  .glass {
-    @apply bg-card/80 backdrop-blur-xl border border-border/50;
-  }
-
-  .gradient-border {
-    background: linear-gradient(var(--background), var(--background)) padding-box,
-                linear-gradient(135deg, hsl(var(--primary)), hsl(var(--primary) / 0.3)) border-box;
-    border: 1px solid transparent;
-  }
-
-  .text-gradient {
-    @apply bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent;
-  }
-
-  .animate-pulse-slow {
-    animation: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
-  }
-
-  .animate-glow {
-    animation: glow 2s ease-in-out infinite alternate;
-  }
-
-  @keyframes glow {
-    from {
-      box-shadow: 0 0 10px hsl(var(--primary) / 0.2),
-                  0 0 20px hsl(var(--primary) / 0.1);
-    }
-    to {
-      box-shadow: 0 0 20px hsl(var(--primary) / 0.4),
-                  0 0 40px hsl(var(--primary) / 0.2);
-    }
   }
 }
