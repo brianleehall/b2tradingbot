@@ -4,7 +4,7 @@ project_id = "ksegdaxqffkycxxqkrdi"
 verify_jwt = false
 
 [functions.alpaca-account]
-verify_jwt = false
+verify_jwt = true
 
 [functions.auto-trade]
 verify_jwt = false

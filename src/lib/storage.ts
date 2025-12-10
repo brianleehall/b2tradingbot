@@ -1,23 +1,23 @@
-import { AlpacaCredentials, Strategy } from './types';
+import { Strategy } from './types';
 
-const CREDENTIALS_KEY = 'alpaca_credentials';
 const TUTORIAL_KEY = 'tutorial_completed';
 const THEME_KEY = 'theme';
-const AUTO_TRADING_KEY = 'auto_trading_enabled';
-const SELECTED_STRATEGY_KEY = 'selected_strategy';
 
 export const storage = {
-  getCredentials: (): AlpacaCredentials | null => {
-    const data = localStorage.getItem(CREDENTIALS_KEY);
-    return data ? JSON.parse(data) : null;
+  // Credentials are now stored securely in the database, not localStorage
+  // These methods are deprecated and will be removed
+  getCredentials: (): null => {
+    return null;
   },
 
-  setCredentials: (credentials: AlpacaCredentials): void => {
-    localStorage.setItem(CREDENTIALS_KEY, JSON.stringify(credentials));
+  setCredentials: (): void => {
+    // No-op: credentials are now stored in the database
+    console.warn('storage.setCredentials is deprecated. Credentials are stored in the database.');
   },
 
   clearCredentials: (): void => {
-    localStorage.removeItem(CREDENTIALS_KEY);
+    // Clear any legacy credentials from localStorage
+    localStorage.removeItem('alpaca_credentials');
   },
 
   isTutorialCompleted: (): boolean => {
@@ -36,19 +36,20 @@ export const storage = {
     localStorage.setItem(THEME_KEY, theme);
   },
 
+  // These are now managed via Supabase, but kept for backwards compatibility
   isAutoTradingEnabled: (): boolean => {
-    return localStorage.getItem(AUTO_TRADING_KEY) === 'true';
+    return false; // Now managed via database
   },
 
-  setAutoTrading: (enabled: boolean): void => {
-    localStorage.setItem(AUTO_TRADING_KEY, String(enabled));
+  setAutoTrading: (): void => {
+    // No-op: managed via database
   },
 
   getSelectedStrategy: (): string | null => {
-    return localStorage.getItem(SELECTED_STRATEGY_KEY);
+    return null; // Now managed via database
   },
 
-  setSelectedStrategy: (strategyId: string): void => {
-    localStorage.setItem(SELECTED_STRATEGY_KEY, strategyId);
+  setSelectedStrategy: (): void => {
+    // No-op: managed via database
   },
 };

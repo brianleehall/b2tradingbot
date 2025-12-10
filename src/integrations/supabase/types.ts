@@ -115,7 +115,32 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      decrypt_secret: { Args: { encrypted_text: string }; Returns: string }
+      encrypt_secret: { Args: { plain_text: string }; Returns: string }
+      get_active_trading_configs: {
+        Args: never
+        Returns: {
+          api_key_id: string
+          auto_trading_enabled: boolean
+          id: string
+          is_paper_trading: boolean
+          secret_key: string
+          selected_strategy: string
+          user_id: string
+        }[]
+      }
+      get_decrypted_trading_config: {
+        Args: { p_user_id: string }
+        Returns: {
+          api_key_id: string
+          auto_trading_enabled: boolean
+          id: string
+          is_paper_trading: boolean
+          secret_key: string
+          selected_strategy: string
+          user_id: string
+        }[]
+      }
     }
     Enums: {
       [_ in never]: never

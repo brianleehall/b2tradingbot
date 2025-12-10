@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
 import { supabase } from '@/integrations/supabase/client';
-import { storage } from '@/lib/storage';
 import { AccountInfo, Position, Order } from '@/lib/types';
 import { mockAccount, mockPositions, mockOrders } from '@/lib/mockData';
 
@@ -21,9 +20,7 @@ export function useAlpacaData(isConnected: boolean): UseAlpacaDataResult {
   const [error, setError] = useState<string | null>(null);
 
   const fetchData = useCallback(async () => {
-    const credentials = storage.getCredentials();
-    
-    if (!isConnected || !credentials) {
+    if (!isConnected) {
       setAccount(mockAccount);
       setPositions(mockPositions);
       setOrders(mockOrders);
@@ -34,15 +31,17 @@ export function useAlpacaData(isConnected: boolean): UseAlpacaDataResult {
     setError(null);
 
     try {
+      // The edge function now uses the authenticated user's JWT to fetch their credentials
+      // from the database securely - no need to send credentials from client
       const [accountRes, positionsRes, ordersRes] = await Promise.all([
         supabase.functions.invoke('alpaca-account', {
-          body: { ...credentials, endpoint: 'account' }
+          body: { endpoint: 'account' }
         }),
         supabase.functions.invoke('alpaca-account', {
-          body: { ...credentials, endpoint: 'positions' }
+          body: { endpoint: 'positions' }
         }),
         supabase.functions.invoke('alpaca-account', {
-          body: { ...credentials, endpoint: 'orders' }
+          body: { endpoint: 'orders' }
         })
       ]);
 
