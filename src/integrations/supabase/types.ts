@@ -14,7 +14,102 @@ export type Database = {
   }
   public: {
     Tables: {
-      [_ in never]: never
+      profiles: {
+        Row: {
+          created_at: string
+          email: string | null
+          id: string
+          updated_at: string
+        }
+        Insert: {
+          created_at?: string
+          email?: string | null
+          id: string
+          updated_at?: string
+        }
+        Update: {
+          created_at?: string
+          email?: string | null
+          id?: string
+          updated_at?: string
+        }
+        Relationships: []
+      }
+      trade_logs: {
+        Row: {
+          created_at: string
+          error_message: string | null
+          id: string
+          price: number | null
+          qty: number
+          side: string
+          status: string
+          strategy: string | null
+          symbol: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          price?: number | null
+          qty: number
+          side: string
+          status: string
+          strategy?: string | null
+          symbol: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          error_message?: string | null
+          id?: string
+          price?: number | null
+          qty?: number
+          side?: string
+          status?: string
+          strategy?: string | null
+          symbol?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
+      trading_configurations: {
+        Row: {
+          api_key_id: string
+          auto_trading_enabled: boolean
+          created_at: string
+          id: string
+          is_paper_trading: boolean
+          secret_key: string
+          selected_strategy: string | null
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          api_key_id: string
+          auto_trading_enabled?: boolean
+          created_at?: string
+          id?: string
+          is_paper_trading?: boolean
+          secret_key: string
+          selected_strategy?: string | null
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          api_key_id?: string
+          auto_trading_enabled?: boolean
+          created_at?: string
+          id?: string
+          is_paper_trading?: boolean
+          secret_key?: string
+          selected_strategy?: string | null
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never

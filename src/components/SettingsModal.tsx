@@ -4,18 +4,27 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { Key, Shield, ExternalLink, Eye, EyeOff, AlertCircle, CheckCircle2 } from 'lucide-react';
+import { Key, Shield, ExternalLink, Eye, EyeOff, AlertCircle, CheckCircle2, Loader2 } from 'lucide-react';
 import { AlpacaCredentials } from '@/lib/types';
-import { storage } from '@/lib/storage';
 import { toast } from '@/hooks/use-toast';
+
+interface TradingConfig {
+  id: string;
+  apiKeyId: string;
+  secretKey: string;
+  isPaperTrading: boolean;
+  selectedStrategy: string | null;
+  autoTradingEnabled: boolean;
+}
 
 interface SettingsModalProps {
   open: boolean;
   onClose: () => void;
   onConnect: (credentials: AlpacaCredentials) => void;
+  existingConfig?: TradingConfig | null;
 }
 
-export function SettingsModal({ open, onClose, onConnect }: SettingsModalProps) {
+export function SettingsModal({ open, onClose, onConnect, existingConfig }: SettingsModalProps) {
   const [apiKeyId, setApiKeyId] = useState('');
   const [secretKey, setSecretKey] = useState('');
   const [isPaperTrading, setIsPaperTrading] = useState(true);
@@ -23,13 +32,12 @@ export function SettingsModal({ open, onClose, onConnect }: SettingsModalProps) 
   const [isValidating, setIsValidating] = useState(false);
 
   useEffect(() => {
-    const savedCredentials = storage.getCredentials();
-    if (savedCredentials) {
-      setApiKeyId(savedCredentials.apiKeyId);
-      setSecretKey(savedCredentials.secretKey);
-      setIsPaperTrading(savedCredentials.isPaperTrading);
+    if (existingConfig) {
+      setApiKeyId(existingConfig.apiKeyId);
+      setSecretKey(existingConfig.secretKey);
+      setIsPaperTrading(existingConfig.isPaperTrading);
     }
-  }, [open]);
+  }, [existingConfig, open]);
 
   const handleConnect = async () => {
     if (!apiKeyId.trim() || !secretKey.trim()) {
@@ -43,17 +51,13 @@ export function SettingsModal({ open, onClose, onConnect }: SettingsModalProps) 
 
     setIsValidating(true);
     
-    // Simulate validation
-    await new Promise(resolve => setTimeout(resolve, 1500));
-    
     const credentials: AlpacaCredentials = {
       apiKeyId: apiKeyId.trim(),
       secretKey: secretKey.trim(),
       isPaperTrading,
     };
 
-    storage.setCredentials(credentials);
-    onConnect(credentials);
+    await onConnect(credentials);
     
     toast({
       title: "Connected Successfully",
@@ -143,11 +147,14 @@ export function SettingsModal({ open, onClose, onConnect }: SettingsModalProps) 
             </Button>
             <Button onClick={handleConnect} disabled={isValidating} className="flex-1 gap-2">
               {isValidating ? (
-                <>Validating...</>
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  Saving...
+                </>
               ) : (
                 <>
                   <CheckCircle2 className="w-4 h-4" />
-                  Connect
+                  {existingConfig ? 'Update' : 'Connect'}
                 </>
               )}
             </Button>

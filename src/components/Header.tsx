@@ -1,5 +1,12 @@
-import { Bot, Settings, Sun, Moon, LogOut } from 'lucide-react';
+import { Bot, Settings, Sun, Moon, LogOut, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu';
 
 interface HeaderProps {
   theme: 'light' | 'dark';
@@ -7,9 +14,19 @@ interface HeaderProps {
   onOpenSettings: () => void;
   isConnected: boolean;
   onDisconnect: () => void;
+  onSignOut?: () => void;
+  userEmail?: string;
 }
 
-export function Header({ theme, onToggleTheme, onOpenSettings, isConnected, onDisconnect }: HeaderProps) {
+export function Header({ 
+  theme, 
+  onToggleTheme, 
+  onOpenSettings, 
+  isConnected, 
+  onDisconnect,
+  onSignOut,
+  userEmail 
+}: HeaderProps) {
   return (
     <header className="glass sticky top-0 z-50 border-b border-border/50">
       <div className="container mx-auto px-4 h-16 flex items-center justify-between">
@@ -19,7 +36,7 @@ export function Header({ theme, onToggleTheme, onOpenSettings, isConnected, onDi
           </div>
           <div>
             <h1 className="font-semibold text-lg">TradingBot</h1>
-            <p className="text-xs text-muted-foreground">Paper Trading Mode</p>
+            <p className="text-xs text-muted-foreground">AI-Powered Auto Trading</p>
           </div>
         </div>
 
@@ -39,10 +56,30 @@ export function Header({ theme, onToggleTheme, onOpenSettings, isConnected, onDi
             <Settings className="w-5 h-5" />
           </Button>
 
-          {isConnected && (
-            <Button variant="ghost" size="icon" onClick={onDisconnect}>
-              <LogOut className="w-5 h-5" />
-            </Button>
+          {userEmail && onSignOut && (
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button variant="ghost" size="icon">
+                  <User className="w-5 h-5" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-56">
+                <div className="px-2 py-1.5">
+                  <p className="text-sm font-medium truncate">{userEmail}</p>
+                </div>
+                <DropdownMenuSeparator />
+                {isConnected && (
+                  <DropdownMenuItem onClick={onDisconnect}>
+                    <LogOut className="w-4 h-4 mr-2" />
+                    Disconnect Alpaca
+                  </DropdownMenuItem>
+                )}
+                <DropdownMenuItem onClick={onSignOut} className="text-destructive">
+                  <LogOut className="w-4 h-4 mr-2" />
+                  Sign Out
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           )}
         </div>
       </div>
