@@ -27,12 +27,9 @@ interface ScanResult {
   scanDate?: string;
 }
 
-// High-priority stocks to scan first (most likely to qualify)
+// High-priority stocks (small list for speed)
 const PRIORITY_STOCKS = [
-  'SMCI', 'MARA', 'RIOT', 'MSTR', 'HUT', 'CLSK', 'COIN', 
-  'IONQ', 'RGTI', 'QUBT', 'SOUN', 'ARM', 'HOOD', 'SOFI',
-  'UPST', 'AFRM', 'PLUG', 'XPEV', 'LI', 'NIO', 'RIVN',
-  'NVDA', 'TSLA', 'AMD', 'META', 'AAPL'
+  'SMCI', 'MARA', 'RIOT', 'MSTR', 'HUT', 'COIN', 'IONQ', 'RGTI'
 ];
 
 // Fallback stocks
@@ -169,17 +166,17 @@ serve(async (req) => {
 
     const qualifiedStocks: SelectedStock[] = [];
     let scannedCount = 0;
-    const maxScans = 15; // Limit scans to avoid timeout
+    const maxScans = 8; // Limit scans for speed
 
-    // Scan priority stocks first
+    // Scan priority stocks
     for (const symbol of PRIORITY_STOCKS) {
       if (scannedCount >= maxScans || qualifiedStocks.length >= 6) break;
       
       const stockFloat = STOCK_FLOAT[symbol];
       if (stockFloat && stockFloat > CRITERIA.MAX_FLOAT_MILLIONS) continue;
 
-      // Small delay to be polite to API
-      await new Promise(r => setTimeout(r, 500));
+      // Minimal delay
+      await new Promise(r => setTimeout(r, 100));
 
       const bars = await getPolygonDailyBars(symbol, fromDate, scanDate, polygonApiKey);
       scannedCount++;
@@ -235,7 +232,7 @@ serve(async (req) => {
         if (topStocks.length >= 3) break;
         if (existingSymbols.has(fallback)) continue;
         
-        await new Promise(r => setTimeout(r, 500));
+        await new Promise(r => setTimeout(r, 100));
         
         const bars = await getPolygonDailyBars(fallback, fromDate, scanDate, polygonApiKey);
         if (bars && bars.length >= 2) {
