@@ -316,34 +316,92 @@ serve(async (req) => {
       console.log(`No stocks qualified across 5 days. Adding ${FALLBACK_STOCKS.length} fallbacks: ${FALLBACK_STOCKS.join(', ')}`);
       
       for (const fallback of FALLBACK_STOCKS) {
-        await new Promise(r => setTimeout(r, 120));
+        await new Promise(r => setTimeout(r, 200));
         
-        const bars = await getPolygonDailyBars(fallback, fromDate, toDate, polygonApiKey);
-        if (bars && bars.length >= 2) {
-          const yesterdayBar = bars[bars.length - 1];
-          const dayBeforeBar = bars[bars.length - 2];
-          const volumeBars = bars.slice(0, -1).slice(-30);
-          const avgVolume30d = volumeBars.length > 0 
-            ? volumeBars.reduce((sum: number, b: any) => sum + b.v, 0) / volumeBars.length : 0;
-          
-          const priceChange = dayBeforeBar.c > 0 
-            ? ((yesterdayBar.c - dayBeforeBar.c) / dayBeforeBar.c) * 100 : 0;
-          const rvol = avgVolume30d > 0 ? yesterdayBar.v / avgVolume30d : 0;
+        let fallbackStock: SelectedStock | null = null;
+        
+        try {
+          const bars = await getPolygonDailyBars(fallback, fromDate, toDate, polygonApiKey);
+          if (bars && bars.length >= 2) {
+            const yesterdayBar = bars[bars.length - 1];
+            const dayBeforeBar = bars[bars.length - 2];
+            const volumeBars = bars.slice(0, -1).slice(-30);
+            const avgVolume30d = volumeBars.length > 0 
+              ? volumeBars.reduce((sum: number, b: any) => sum + b.v, 0) / volumeBars.length : 0;
+            
+            const priceChange = dayBeforeBar.c > 0 
+              ? ((yesterdayBar.c - dayBeforeBar.c) / dayBeforeBar.c) * 100 : 0;
+            const rvol = avgVolume30d > 0 ? yesterdayBar.v / avgVolume30d : 0;
 
-          console.log(`+ Fallback ${fallback}: $${yesterdayBar.c.toFixed(2)}, ${priceChange.toFixed(1)}%, RVOL ${rvol.toFixed(1)}x`);
-          
-          topStocks.push({
+            console.log(`+ Fallback ${fallback}: $${yesterdayBar.c.toFixed(2)}, ${priceChange.toFixed(1)}%, RVOL ${rvol.toFixed(1)}x`);
+            
+            fallbackStock = {
+              symbol: fallback,
+              priceChange: Math.round(priceChange * 100) / 100,
+              rvol: Math.round(rvol * 100) / 100,
+              price: Math.round(yesterdayBar.c * 100) / 100,
+              avgVolume: Math.round(avgVolume30d),
+              volume: yesterdayBar.v,
+              float: STOCK_FLOAT[fallback],
+              exchange: 'NASDAQ',
+              isFallback: true,
+            };
+          }
+        } catch (e) {
+          console.log(`API fetch failed for ${fallback}, using static data`);
+        }
+        
+        // Use static fallback data if API failed
+        if (!fallbackStock) {
+          console.log(`+ Fallback ${fallback} (static data)`);
+          const staticData: Record<string, { price: number; avgVolume: number }> = {
+            'NVDA': { price: 185, avgVolume: 250000000 },
+            'TSLA': { price: 445, avgVolume: 100000000 },
+          };
+          const data = staticData[fallback] || { price: 100, avgVolume: 10000000 };
+          fallbackStock = {
             symbol: fallback,
-            priceChange: Math.round(priceChange * 100) / 100,
-            rvol: Math.round(rvol * 100) / 100,
-            price: Math.round(yesterdayBar.c * 100) / 100,
-            avgVolume: Math.round(avgVolume30d),
-            volume: yesterdayBar.v,
+            priceChange: 0,
+            rvol: 1,
+            price: data.price,
+            avgVolume: data.avgVolume,
+            volume: data.avgVolume,
             float: STOCK_FLOAT[fallback],
             exchange: 'NASDAQ',
             isFallback: true,
-          });
+          };
         }
+        
+        topStocks.push(fallbackStock);
+      }
+    }
+    
+    // Ensure we always have at least MIN_STOCKS
+    if (topStocks.length < MIN_STOCKS) {
+      console.log(`Only ${topStocks.length} stocks, adding remaining fallbacks`);
+      const existingSymbols = new Set(topStocks.map(s => s.symbol));
+      
+      for (const fallback of FALLBACK_STOCKS) {
+        if (topStocks.length >= MIN_STOCKS) break;
+        if (existingSymbols.has(fallback)) continue;
+        
+        const staticData: Record<string, { price: number; avgVolume: number }> = {
+          'NVDA': { price: 185, avgVolume: 250000000 },
+          'TSLA': { price: 445, avgVolume: 100000000 },
+        };
+        const data = staticData[fallback] || { price: 100, avgVolume: 10000000 };
+        
+        topStocks.push({
+          symbol: fallback,
+          priceChange: 0,
+          rvol: 1,
+          price: data.price,
+          avgVolume: data.avgVolume,
+          volume: data.avgVolume,
+          float: STOCK_FLOAT[fallback],
+          exchange: 'NASDAQ',
+          isFallback: true,
+        });
       }
     }
 
