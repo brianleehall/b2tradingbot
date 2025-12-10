@@ -231,6 +231,9 @@ async function getPreMarketData(
 }
 
 serve(async (req) => {
+  // v2 - Token-based auth fix
+  console.log("ORB Stock Selector v2 triggered at:", new Date().toISOString());
+  
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
