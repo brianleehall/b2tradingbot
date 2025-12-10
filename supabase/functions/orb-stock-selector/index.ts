@@ -20,6 +20,9 @@ interface ScanResult {
   stocks: SelectedStock[];
   scannedAt: string;
   message?: string;
+  marketRegime: 'bullish' | 'bearish';
+  spyPrice?: number;
+  spy200SMA?: number;
 }
 
 // High-volume stocks to scan (NASDAQ/NYSE only, commonly traded)
@@ -66,6 +69,75 @@ const STOCK_METADATA: Record<string, { float: number; exchange: string }> = {
   'INTC': { float: 4200, exchange: 'NASDAQ' },
   'NFLX': { float: 430, exchange: 'NASDAQ' },
 };
+
+// Get SPY 200-day SMA for market regime detection
+async function getSPY200SMA(
+  apiKeyId: string,
+  secretKey: string
+): Promise<{ currentPrice: number; sma200: number } | null> {
+  try {
+    const baseUrl = 'https://data.alpaca.markets/v2';
+    
+    // Get latest SPY quote
+    const quoteRes = await fetch(
+      `${baseUrl}/stocks/SPY/quotes/latest`,
+      {
+        headers: {
+          'APCA-API-KEY-ID': apiKeyId,
+          'APCA-API-SECRET-KEY': secretKey,
+        },
+      }
+    );
+
+    if (!quoteRes.ok) {
+      console.log('SPY quote failed:', await quoteRes.text());
+      return null;
+    }
+
+    const quoteData = await quoteRes.json();
+    const currentPrice = quoteData.quote?.ap || quoteData.quote?.bp || 0;
+
+    // Get 200 days of daily bars for SMA calculation
+    const now = new Date();
+    const startDate = new Date(now);
+    startDate.setDate(startDate.getDate() - 300); // Extra days for weekends/holidays
+
+    const barsRes = await fetch(
+      `${baseUrl}/stocks/SPY/bars?timeframe=1Day&start=${startDate.toISOString().split('T')[0]}&limit=200`,
+      {
+        headers: {
+          'APCA-API-KEY-ID': apiKeyId,
+          'APCA-API-SECRET-KEY': secretKey,
+        },
+      }
+    );
+
+    if (!barsRes.ok) {
+      console.log('SPY bars failed');
+      return null;
+    }
+
+    const barsData = await barsRes.json();
+    const bars = barsData.bars || [];
+
+    if (bars.length < 200) {
+      console.log(`Only got ${bars.length} bars for SPY, need 200 for SMA`);
+      // Use what we have if close to 200
+      if (bars.length < 150) return null;
+    }
+
+    // Calculate 200-day SMA using closing prices
+    const closes = bars.slice(-200).map((b: any) => b.c);
+    const sma200 = closes.reduce((sum: number, c: number) => sum + c, 0) / closes.length;
+
+    console.log(`SPY current: $${currentPrice.toFixed(2)}, 200-SMA: $${sma200.toFixed(2)}`);
+
+    return { currentPrice, sma200 };
+  } catch (error) {
+    console.error('Error fetching SPY 200-SMA:', error);
+    return null;
+  }
+}
 
 async function getPreMarketData(
   symbol: string,
@@ -213,7 +285,10 @@ serve(async (req) => {
         JSON.stringify({
           stocks: mockStocks,
           scannedAt: new Date().toISOString(),
-          message: 'Using demo data - connect Alpaca for live scanning'
+          message: 'Using demo data - connect Alpaca for live scanning',
+          marketRegime: 'bullish' as const,
+          spyPrice: 580.00,
+          spy200SMA: 550.00,
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
@@ -232,6 +307,14 @@ serve(async (req) => {
     }
 
     console.log("Scanning stocks with live data...");
+
+    // First, get SPY 200-day SMA for market regime detection
+    const spyData = await getSPY200SMA(apiKeyId, secretKey);
+    const marketRegime: 'bullish' | 'bearish' = spyData && spyData.currentPrice < spyData.sma200 
+      ? 'bearish' 
+      : 'bullish';
+    
+    console.log(`Market regime: ${marketRegime} (SPY: $${spyData?.currentPrice?.toFixed(2) || 'N/A'}, 200-SMA: $${spyData?.sma200?.toFixed(2) || 'N/A'})`);
 
     // Scan all stocks in universe
     const qualifiedStocks: SelectedStock[] = [];
@@ -297,6 +380,9 @@ serve(async (req) => {
     const result: ScanResult = {
       stocks: topStocks,
       scannedAt: new Date().toISOString(),
+      marketRegime,
+      spyPrice: spyData?.currentPrice,
+      spy200SMA: spyData?.sma200,
     };
 
     if (topStocks.length < 3) {

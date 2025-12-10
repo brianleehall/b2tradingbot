@@ -277,7 +277,7 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const { action, userId, tickers } = await req.json();
+    const { action, userId, tickers, marketRegime } = await req.json();
 
     // Get user's trading config
     const { data: configs, error: configError } = await supabase
@@ -352,6 +352,12 @@ serve(async (req) => {
         );
 
         if (signal && confidence >= 0.7) {
+          // BEAR MARKET FILTER: Only allow shorts in bearish regime
+          if (marketRegime === 'bearish' && signal === 'long') {
+            console.log(`Skipping LONG signal for ${ticker} - Bear market mode active (SPY below 200-SMA)`);
+            continue;
+          }
+
           const orbHeight = orbRange.high - orbRange.low;
           const stopLoss = signal === 'long' ? orbRange.low : orbRange.high;
           const target1 = signal === 'long' 

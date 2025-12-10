@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Loader2, RefreshCw, TrendingUp, TrendingDown, AlertTriangle, Sparkles } from 'lucide-react';
+import { Loader2, RefreshCw, TrendingUp, TrendingDown, AlertTriangle, Sparkles, ShieldAlert, Zap } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
 import { getETTime } from '@/lib/orbConfig';
@@ -21,15 +21,19 @@ export interface SelectedStock {
 
 interface AutoSelectedStocksProps {
   onStocksChange: (symbols: string[]) => void;
+  onMarketRegimeChange?: (regime: 'bullish' | 'bearish') => void;
   disabled?: boolean;
 }
 
-export function AutoSelectedStocks({ onStocksChange, disabled }: AutoSelectedStocksProps) {
+export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disabled }: AutoSelectedStocksProps) {
   const [stocks, setStocks] = useState<SelectedStock[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [lastScanTime, setLastScanTime] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [marketRegime, setMarketRegime] = useState<'bullish' | 'bearish'>('bullish');
+  const [spyPrice, setSpyPrice] = useState<number | null>(null);
+  const [spy200SMA, setSpy200SMA] = useState<number | null>(null);
 
   const fetchStocks = useCallback(async () => {
     setIsLoading(true);
@@ -70,6 +74,13 @@ export function AutoSelectedStocks({ onStocksChange, disabled }: AutoSelectedSto
       setStocks(stocksWithChecked);
       setLastScanTime(data.scannedAt);
       setMessage(data.message || null);
+      
+      // Set market regime from scan
+      const regime = data.marketRegime || 'bullish';
+      setMarketRegime(regime);
+      setSpyPrice(data.spyPrice || null);
+      setSpy200SMA(data.spy200SMA || null);
+      onMarketRegimeChange?.(regime);
 
       // Notify parent of selected symbols
       const checkedSymbols = stocksWithChecked
@@ -88,7 +99,7 @@ export function AutoSelectedStocks({ onStocksChange, disabled }: AutoSelectedSto
   // Initial fetch on mount
   useEffect(() => {
     fetchStocks();
-  }, [fetchStocks]);
+  }, [fetchStocks, onMarketRegimeChange]);
 
   // Auto-refresh at 9:15 AM ET
   useEffect(() => {
@@ -149,7 +160,7 @@ export function AutoSelectedStocks({ onStocksChange, disabled }: AutoSelectedSto
   return (
     <Card className="border-2 border-primary/30 bg-gradient-to-br from-primary/5 to-transparent">
       <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between flex-wrap gap-3">
           <div className="flex items-center gap-3">
             <div className="p-2 bg-primary/20 rounded-lg">
               <Sparkles className="h-6 w-6 text-primary" />
@@ -179,6 +190,44 @@ export function AutoSelectedStocks({ onStocksChange, disabled }: AutoSelectedSto
             </Button>
           </div>
         </div>
+        
+        {/* Market Regime Indicator */}
+        {!isLoading && !error && (
+          <div className={cn(
+            "mt-4 p-3 rounded-lg border-2 flex items-center justify-between",
+            marketRegime === 'bearish' 
+              ? "bg-red-500/10 border-red-500/40" 
+              : "bg-emerald-500/10 border-emerald-500/40"
+          )}>
+            <div className="flex items-center gap-3">
+              {marketRegime === 'bearish' ? (
+                <ShieldAlert className="h-6 w-6 text-red-500" />
+              ) : (
+                <Zap className="h-6 w-6 text-emerald-500" />
+              )}
+              <div>
+                <div className={cn(
+                  "font-bold text-lg",
+                  marketRegime === 'bearish' ? "text-red-500" : "text-emerald-500"
+                )}>
+                  {marketRegime === 'bearish' ? '🐻 BEAR MARKET MODE' : '🐂 BULL MARKET MODE'}
+                </div>
+                <div className="text-sm text-muted-foreground">
+                  {marketRegime === 'bearish' 
+                    ? 'SPY below 200-SMA → Only SHORT breakouts allowed'
+                    : 'SPY above 200-SMA → Long & Short breakouts allowed'
+                  }
+                </div>
+              </div>
+            </div>
+            {spyPrice && spy200SMA && (
+              <div className="text-right text-sm">
+                <div className="text-muted-foreground">SPY: <span className="font-mono font-medium text-foreground">${spyPrice.toFixed(2)}</span></div>
+                <div className="text-muted-foreground">200-SMA: <span className="font-mono font-medium text-foreground">${spy200SMA.toFixed(2)}</span></div>
+              </div>
+            )}
+          </div>
+        )}
       </CardHeader>
       <CardContent>
         {isLoading ? (
