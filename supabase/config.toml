@@ -1,13 +1,7 @@
 project_id = "ksegdaxqffkycxxqkrdi"
 
-[functions.analyze-strategy]
-verify_jwt = false
-
 [functions.alpaca-account]
 verify_jwt = true
 
-[functions.auto-trade]
-verify_jwt = false
-
-[functions.gap-scanner]
-verify_jwt = false
+[functions.orb-trading]
+verify_jwt = true
