@@ -10,15 +10,17 @@ import { getETTime } from '@/lib/orbConfig';
 
 export interface SelectedStock {
   symbol: string;
-  priceChange: number;      // Yesterday's % change (was preMarketChange)
+  priceChange: number;      // Day's % change when qualified
   rvol: number;
   price: number;
   avgVolume: number;
-  volume?: number;          // Yesterday's actual volume
+  volume?: number;
   float?: number;
   exchange: string;
   isChecked: boolean;
   isFallback?: boolean;
+  daysAgo?: number;         // How many days ago stock qualified
+  qualifyingDate?: string;  // The date stock qualified
 }
 
 interface AutoSelectedStocksProps {
@@ -93,10 +95,11 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
 
       const stocksWithChecked = (data.stocks || []).map((stock: Omit<SelectedStock, 'isChecked'>) => ({
         ...stock,
-        // Map priceChange for compatibility (API returns priceChange, not preMarketChange)
         priceChange: stock.priceChange ?? (stock as any).preMarketChange ?? 0,
         isChecked: true, // All checked by default
         isFallback: stock.isFallback ?? false,
+        daysAgo: stock.daysAgo,
+        qualifyingDate: stock.qualifyingDate,
       }));
 
       setStocks(stocksWithChecked);
@@ -325,14 +328,18 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
                     >
                       {stock.exchange}
                     </Badge>
-                    {stock.isFallback && (
+                    {stock.isFallback ? (
                       <Badge variant="secondary" className="ml-2 text-xs bg-amber-500/20 text-amber-500 border-amber-500/30">
-                        FALLBACK
+                        Fallback – Proven ORB Leader
+                      </Badge>
+                    ) : stock.daysAgo !== undefined && (
+                      <Badge variant="secondary" className="ml-2 text-xs bg-emerald-500/20 text-emerald-500 border-emerald-500/30">
+                        {stock.daysAgo === 0 ? 'Qualified Yesterday' : `Qualified ${stock.daysAgo + 1} days ago`}
                       </Badge>
                     )}
                   </div>
 
-                  {/* Yesterday's Price Change */}
+                  {/* Price Change - when stock qualified */}
                   <div className="flex items-center gap-2 mb-2">
                     {stock.priceChange >= 0 ? (
                       <TrendingUp className="h-5 w-5 text-emerald-500" />
@@ -345,7 +352,9 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
                     )}>
                       {stock.priceChange >= 0 ? '+' : ''}{stock.priceChange.toFixed(2)}%
                     </span>
-                    <span className="text-xs text-muted-foreground">(yesterday)</span>
+                    <span className="text-xs text-muted-foreground">
+                      {stock.isFallback ? '(yesterday)' : stock.daysAgo === 0 ? '(yesterday)' : `(${stock.daysAgo + 1}d ago)`}
+                    </span>
                   </div>
 
                   {/* RVOL */}
@@ -377,9 +386,9 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
             </div>
 
             {/* Summary */}
-            <div className="mt-4 pt-4 border-t border-border flex items-center justify-between">
+            <div className="mt-4 pt-4 border-t border-border flex items-center justify-between flex-wrap gap-2">
               <div className="text-sm text-muted-foreground">
-                <span className="font-medium text-foreground">{checkedCount}</span> of {stocks.length} stocks selected for trading
+                <span className="font-medium text-foreground">{checkedCount}</span> of {stocks.length} stocks selected
                 {stocks.some(s => s.isFallback) && (
                   <span className="text-amber-500 ml-2">
                     ({stocks.filter(s => s.isFallback).length} fallback{stocks.filter(s => s.isFallback).length > 1 ? 's' : ''})
@@ -387,11 +396,10 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
                 )}
               </div>
               <div className="flex gap-2 text-xs flex-wrap">
+                <Badge variant="secondary">5-Day Lookback</Badge>
                 <Badge variant="secondary">RVOL ≥ 2.5x</Badge>
-                <Badge variant="secondary">Change ≥ ±3%</Badge>
-                <Badge variant="secondary">AvgVol ≥ 800K</Badge>
-                <Badge variant="secondary">Price ≥ $15</Badge>
-                <Badge variant="secondary">Float ≤ 150M</Badge>
+                <Badge variant="secondary">Change ≥ ±3.5%</Badge>
+                <Badge variant="secondary">Price ≥ $20</Badge>
               </div>
             </div>
           </>
