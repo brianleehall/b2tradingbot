@@ -36,17 +36,17 @@ export function RealTimePnL({
     <div className={cn(
       "flex items-center gap-4 px-4 py-3 rounded-lg transition-all duration-300",
       "bg-card/80 backdrop-blur-sm border",
-      flash === 'up' && "animate-pulse bg-success/20 border-success",
-      flash === 'down' && "animate-pulse bg-destructive/20 border-destructive",
+      flash === 'up' && "bg-success/20 border-success",
+      flash === 'down' && "bg-destructive/20 border-destructive",
       !flash && isPositive && "border-success/30",
       !flash && !isPositive && "border-destructive/30",
       isLocked && "border-destructive bg-destructive/10"
     )}>
       <div className="flex items-center gap-2">
         {isLocked ? (
-          <AlertTriangle className="w-5 h-5 text-destructive animate-pulse" />
+          <AlertTriangle className="w-5 h-5 text-destructive" />
         ) : isAutoTrading ? (
-          <Activity className="w-5 h-5 text-primary animate-pulse" />
+          <Activity className="w-5 h-5 text-primary" />
         ) : isPositive ? (
           <TrendingUp className="w-5 h-5 text-success" />
         ) : (
