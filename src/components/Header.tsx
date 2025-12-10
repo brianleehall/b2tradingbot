@@ -1,13 +1,6 @@
 import { Bot, Settings, Sun, Moon, LogOut, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuItem,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
-
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
 interface HeaderProps {
   theme: 'light' | 'dark';
   onToggleTheme: () => void;
@@ -17,36 +10,32 @@ interface HeaderProps {
   onSignOut?: () => void;
   userEmail?: string;
 }
-
-export function Header({ 
-  theme, 
-  onToggleTheme, 
-  onOpenSettings, 
-  isConnected, 
+export function Header({
+  theme,
+  onToggleTheme,
+  onOpenSettings,
+  isConnected,
   onDisconnect,
   onSignOut,
-  userEmail 
+  userEmail
 }: HeaderProps) {
-  return (
-    <header className="glass sticky top-0 z-50 border-b border-border/50">
+  return <header className="glass sticky top-0 z-50 border-b border-border/50">
       <div className="container mx-auto px-4 h-16 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <div className="p-2 rounded-lg bg-primary/10 glow-primary">
             <Bot className="w-6 h-6 text-primary" />
           </div>
           <div>
-            <h1 className="font-semibold text-lg">TradingBot</h1>
+            <h1 className="font-semibold text-lg">ORB TradingBot</h1>
             <p className="text-xs text-muted-foreground">AI-Powered Auto Trading</p>
           </div>
         </div>
 
         <div className="flex items-center gap-2">
-          {isConnected && (
-            <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-success/10 border border-success/20">
+          {isConnected && <div className="hidden sm:flex items-center gap-2 px-3 py-1.5 rounded-full bg-success/10 border border-success/20">
               <div className="w-2 h-2 rounded-full bg-success animate-pulse" />
               <span className="text-xs font-medium text-success">Connected</span>
-            </div>
-          )}
+            </div>}
 
           <Button variant="ghost" size="icon" onClick={onToggleTheme}>
             {theme === 'dark' ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
@@ -56,8 +45,7 @@ export function Header({
             <Settings className="w-5 h-5" />
           </Button>
 
-          {userEmail && onSignOut && (
-            <DropdownMenu>
+          {userEmail && onSignOut && <DropdownMenu>
               <DropdownMenuTrigger asChild>
                 <Button variant="ghost" size="icon">
                   <User className="w-5 h-5" />
@@ -68,21 +56,17 @@ export function Header({
                   <p className="text-sm font-medium truncate">{userEmail}</p>
                 </div>
                 <DropdownMenuSeparator />
-                {isConnected && (
-                  <DropdownMenuItem onClick={onDisconnect}>
+                {isConnected && <DropdownMenuItem onClick={onDisconnect}>
                     <LogOut className="w-4 h-4 mr-2" />
                     Disconnect Alpaca
-                  </DropdownMenuItem>
-                )}
+                  </DropdownMenuItem>}
                 <DropdownMenuItem onClick={onSignOut} className="text-destructive">
                   <LogOut className="w-4 h-4 mr-2" />
                   Sign Out
                 </DropdownMenuItem>
               </DropdownMenuContent>
-            </DropdownMenu>
-          )}
+            </DropdownMenu>}
         </div>
       </div>
-    </header>
-  );
+    </header>;
 }
