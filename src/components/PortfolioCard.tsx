@@ -1,13 +1,14 @@
-import { TrendingUp, TrendingDown, Wallet, DollarSign } from 'lucide-react';
+import { TrendingUp, TrendingDown, Wallet, DollarSign, Loader2 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { AccountInfo } from '@/lib/types';
 import { cn } from '@/lib/utils';
 
 interface PortfolioCardProps {
   account: AccountInfo;
+  isLoading?: boolean;
 }
 
-export function PortfolioCard({ account }: PortfolioCardProps) {
+export function PortfolioCard({ account, isLoading }: PortfolioCardProps) {
   const isPositive = account.dayChange >= 0;
 
   return (
@@ -16,6 +17,7 @@ export function PortfolioCard({ account }: PortfolioCardProps) {
         <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
           <Wallet className="w-4 h-4" />
           Portfolio Value
+          {isLoading && <Loader2 className="w-3 h-3 animate-spin ml-auto" />}
         </CardTitle>
       </CardHeader>
       <CardContent>
