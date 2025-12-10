@@ -110,6 +110,27 @@ export type Database = {
         }
         Relationships: []
       }
+      user_orb_tickers: {
+        Row: {
+          id: string
+          symbols: string[]
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          id?: string
+          symbols?: string[]
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          id?: string
+          symbols?: string[]
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
     }
     Views: {
       [_ in never]: never
@@ -141,6 +162,7 @@ export type Database = {
           user_id: string
         }[]
       }
+      get_user_orb_tickers: { Args: { p_user_id: string }; Returns: string[] }
     }
     Enums: {
       [_ in never]: never

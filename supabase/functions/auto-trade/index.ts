@@ -37,23 +37,22 @@ interface MarketData {
   avgVolume: number;
 }
 
+// Default fallback symbols if user has none selected
+const DEFAULT_ORB_SYMBOLS = ['NVDA', 'TSLA', 'AMD', 'META', 'AAPL', 'SMCI', 'SPY', 'QQQ'];
+
 const strategies: Record<string, { 
-  symbols: string[], 
   description: string,
   type: 'orb' | 'vwap' | 'gap'
 }> = {
   'orb-5min': {
-    symbols: ['NVDA', 'TSLA', 'AMD', 'META', 'AAPL', 'SMCI', 'SPY', 'QQQ'],
     description: '5-Minute Opening Range Breakout - Trade breakouts from first 5-min candle with volume confirmation',
     type: 'orb'
   },
   'vwap-momentum': {
-    symbols: ['SPY', 'QQQ', 'AAPL', 'MSFT'],
     description: 'VWAP Momentum Bounce - Enter on pullback to VWAP with EMA crossover confirmation',
     type: 'vwap'
   },
   'gap-and-go': {
-    symbols: ['NVDA', 'TSLA', 'AMD'], // Dynamic from scanner in production
     description: 'Gap & Go - Trade high-momentum gap stocks with catalyst confirmation',
     type: 'gap'
   }
@@ -471,7 +470,22 @@ serve(async (req) => {
         continue;
       }
 
-      for (const symbol of strategy.symbols) {
+      // Fetch user's selected tickers from database
+      let symbols: string[] = DEFAULT_ORB_SYMBOLS;
+      
+      if (strategy.type === 'orb') {
+        const { data: userTickers } = await supabase
+          .rpc('get_user_orb_tickers', { p_user_id: config.user_id });
+        
+        if (userTickers && userTickers.length > 0) {
+          symbols = userTickers;
+          console.log(`Using user-selected tickers for ${config.user_id}:`, symbols);
+        } else {
+          console.log(`No user tickers found, using defaults for ${config.user_id}`);
+        }
+      }
+
+      for (const symbol of symbols) {
         try {
           // Get current market data
           const marketData = await getMarketData(
