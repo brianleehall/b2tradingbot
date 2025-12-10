@@ -213,11 +213,13 @@ const Index = () => {
         </div>
 
         {/* Auto-Selected ORB Stocks - The main feature */}
-        <AutoSelectedStocks 
-          onStocksChange={handleORBStocksChange}
-          onMarketRegimeChange={handleMarketRegimeChange}
-          disabled={config?.autoTradingEnabled}
-        />
+        {isAuthenticated && (
+          <AutoSelectedStocks 
+            onStocksChange={handleORBStocksChange}
+            onMarketRegimeChange={handleMarketRegimeChange}
+            disabled={config?.autoTradingEnabled}
+          />
+        )}
 
         {/* Quick Trade & AI Analysis */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
