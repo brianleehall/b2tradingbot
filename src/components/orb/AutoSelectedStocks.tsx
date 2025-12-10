@@ -364,10 +364,10 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
                 <span className="font-medium text-foreground">{checkedCount}</span> of {stocks.length} stocks selected for trading
               </div>
               <div className="flex gap-2 text-xs flex-wrap">
-                <Badge variant="secondary">RVOL ≥ 3.0</Badge>
-                <Badge variant="secondary">Change ≥ ±4%</Badge>
-                <Badge variant="secondary">Price ≥ $20</Badge>
-                <Badge variant="secondary">Float ≤ 120M</Badge>
+                <Badge variant="secondary">RVOL ≥ 2.5</Badge>
+                <Badge variant="secondary">Change ≥ ±3%</Badge>
+                <Badge variant="secondary">Price ≥ $15</Badge>
+                <Badge variant="secondary">Float ≤ 150M</Badge>
               </div>
             </div>
           </>
