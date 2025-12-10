@@ -20,64 +20,108 @@ interface TradeSignal {
   action: 'BUY' | 'SELL' | 'HOLD';
   symbol: string;
   qty: number;
+  entryPrice: number;
+  stopLoss: number;
+  target1: number;
+  target2: number;
   confidence: number;
   reason: string;
 }
 
-const strategies: Record<string, { symbols: string[], description: string }> = {
-  'rsi-dip': {
-    symbols: ['AAPL', 'MSFT', 'GOOGL', 'TSLA'],
-    description: 'RSI Dip Buy - Buy when RSI drops below 30, sell when above 70'
+interface MarketData {
+  price: number;
+  high: number;
+  low: number;
+  volume: number;
+  vwap: number;
+  avgVolume: number;
+}
+
+const strategies: Record<string, { 
+  symbols: string[], 
+  description: string,
+  type: 'orb' | 'vwap' | 'gap'
+}> = {
+  'orb-5min': {
+    symbols: ['NVDA', 'TSLA', 'SPY'],
+    description: '5-Minute Opening Range Breakout - Trade breakouts from first 5-min candle with volume confirmation',
+    type: 'orb'
   },
-  'momentum': {
-    symbols: ['BTCUSD', 'ETHUSD'],
-    description: 'Momentum Crypto - Buy on positive momentum with SMA crossover'
+  'vwap-momentum': {
+    symbols: ['SPY', 'QQQ', 'AAPL', 'MSFT'],
+    description: 'VWAP Momentum Bounce - Enter on pullback to VWAP with EMA crossover confirmation',
+    type: 'vwap'
   },
-  'mean-reversion': {
-    symbols: ['AAPL', 'MSFT', 'GOOGL'],
-    description: 'Mean Reversion - Buy when price deviates 2 std below 50-day MA'
-  },
-  'breakout': {
-    symbols: ['BTCUSD', 'ETHUSD'],
-    description: 'Breakout Trader - Buy on breakout above 20-day high'
+  'gap-and-go': {
+    symbols: ['NVDA', 'TSLA', 'AMD'], // Dynamic from scanner in production
+    description: 'Gap & Go - Trade high-momentum gap stocks with catalyst confirmation',
+    type: 'gap'
   }
 };
 
-async function getMarketData(symbol: string, apiKeyId: string, secretKey: string, isPaper: boolean) {
+async function getMarketData(
+  symbol: string, 
+  apiKeyId: string, 
+  secretKey: string
+): Promise<MarketData | null> {
   const dataUrl = 'https://data.alpaca.markets';
   
   try {
-    // For crypto, use crypto endpoint
-    if (symbol.includes('USD')) {
-      const cryptoSymbol = symbol.replace('USD', '/USD');
-      const response = await fetch(
-        `${dataUrl}/v1beta3/crypto/us/latest/trades?symbols=${cryptoSymbol}`,
-        {
-          headers: {
-            'APCA-API-KEY-ID': apiKeyId,
-            'APCA-API-SECRET-KEY': secretKey,
-          }
+    // Fetch latest trade
+    const tradeResponse = await fetch(
+      `${dataUrl}/v2/stocks/${symbol}/trades/latest`,
+      {
+        headers: {
+          'APCA-API-KEY-ID': apiKeyId,
+          'APCA-API-SECRET-KEY': secretKey,
         }
-      );
-      if (response.ok) {
-        const data = await response.json();
-        return data.trades?.[cryptoSymbol]?.p || null;
       }
-    } else {
-      // For stocks
-      const response = await fetch(
-        `${dataUrl}/v2/stocks/${symbol}/trades/latest`,
-        {
-          headers: {
-            'APCA-API-KEY-ID': apiKeyId,
-            'APCA-API-SECRET-KEY': secretKey,
-          }
+    );
+    
+    // Fetch today's bars for VWAP and range
+    const barsResponse = await fetch(
+      `${dataUrl}/v2/stocks/${symbol}/bars?timeframe=5Min&limit=78`,
+      {
+        headers: {
+          'APCA-API-KEY-ID': apiKeyId,
+          'APCA-API-SECRET-KEY': secretKey,
         }
-      );
-      if (response.ok) {
-        const data = await response.json();
-        return data.trade?.p || null;
       }
+    );
+
+    if (tradeResponse.ok && barsResponse.ok) {
+      const tradeData = await tradeResponse.json();
+      const barsData = await barsResponse.json();
+      
+      const bars = barsData.bars || [];
+      const price = tradeData.trade?.p || 0;
+      
+      // Calculate VWAP
+      let totalVolume = 0;
+      let totalVolumePrice = 0;
+      let dayHigh = 0;
+      let dayLow = Infinity;
+      
+      for (const bar of bars) {
+        const typicalPrice = (bar.h + bar.l + bar.c) / 3;
+        totalVolume += bar.v;
+        totalVolumePrice += typicalPrice * bar.v;
+        dayHigh = Math.max(dayHigh, bar.h);
+        dayLow = Math.min(dayLow, bar.l);
+      }
+      
+      const vwap = totalVolume > 0 ? totalVolumePrice / totalVolume : price;
+      const avgVolume = bars.length > 0 ? totalVolume / bars.length : 0;
+      const currentVolume = bars.length > 0 ? bars[bars.length - 1]?.v || 0 : 0;
+
+      return {
+        price,
+        high: dayHigh,
+        low: dayLow === Infinity ? price : dayLow,
+        volume: currentVolume,
+        vwap,
+        avgVolume
+      };
     }
   } catch (error) {
     console.error(`Error fetching market data for ${symbol}:`, error);
@@ -85,13 +129,35 @@ async function getMarketData(symbol: string, apiKeyId: string, secretKey: string
   return null;
 }
 
-async function analyzeWithAI(
-  symbol: string, 
-  price: number, 
-  strategy: string,
+async function analyzeORB(
+  symbol: string,
+  data: MarketData,
   lovableApiKey: string
 ): Promise<TradeSignal | null> {
   try {
+    const volumeRatio = data.avgVolume > 0 ? data.volume / data.avgVolume : 1;
+    const range = data.high - data.low;
+    const rangePercent = (range / data.low) * 100;
+    
+    const prompt = `
+Analyze this 5-Minute Opening Range Breakout setup:
+Symbol: ${symbol}
+Current Price: $${data.price.toFixed(2)}
+Opening Range High: $${data.high.toFixed(2)}
+Opening Range Low: $${data.low.toFixed(2)}
+Range Size: ${rangePercent.toFixed(2)}%
+Volume vs Average: ${(volumeRatio * 100).toFixed(0)}%
+VWAP: $${data.vwap.toFixed(2)}
+
+ORB Rules:
+- BUY signal: Price breaks above range high with volume > 150%
+- SELL signal: Price breaks below range low with volume > 150%
+- HOLD if price is within range or volume insufficient
+
+Calculate position size for 1% account risk, stop at opposite range extreme.
+Targets: 2:1 and 3:1 risk/reward.
+`;
+
     const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
       method: "POST",
       headers: {
@@ -103,22 +169,18 @@ async function analyzeWithAI(
         messages: [
           {
             role: "system",
-            content: `You are a trading signal generator. Given market data and a strategy, output a JSON trade signal.
-            
-Strategy: ${strategies[strategy]?.description || strategy}
-
-Output format (JSON only, no markdown):
+            content: `You are a professional day trader analyzing ORB setups. Output ONLY valid JSON:
 {
   "action": "BUY" | "SELL" | "HOLD",
   "confidence": 1-10,
-  "qty": number (small position size, 1-5 for stocks, 0.01-0.1 for crypto),
-  "reason": "brief explanation"
+  "qty": number (1-100 shares),
+  "stopLoss": number (price),
+  "target1": number (2:1 R:R price),
+  "target2": number (3:1 R:R price),
+  "reason": "brief 1-line explanation"
 }`
           },
-          {
-            role: "user",
-            content: `Symbol: ${symbol}\nCurrent Price: $${price}\n\nGenerate a trade signal based on the strategy.`
-          }
+          { role: "user", content: prompt }
         ],
       }),
     });
@@ -128,12 +190,11 @@ Output format (JSON only, no markdown):
       return null;
     }
 
-    const data = await response.json();
-    const content = data.choices?.[0]?.message?.content;
+    const aiData = await response.json();
+    const content = aiData.choices?.[0]?.message?.content;
     
     if (!content) return null;
 
-    // Parse JSON from response
     const jsonMatch = content.match(/\{[\s\S]*\}/);
     if (!jsonMatch) return null;
     
@@ -141,12 +202,173 @@ Output format (JSON only, no markdown):
     return {
       action: signal.action,
       symbol,
-      qty: signal.qty || 1,
+      qty: signal.qty || 10,
+      entryPrice: data.price,
+      stopLoss: signal.stopLoss || data.low,
+      target1: signal.target1 || data.price * 1.02,
+      target2: signal.target2 || data.price * 1.03,
       confidence: signal.confidence || 5,
-      reason: signal.reason || 'AI analysis'
+      reason: signal.reason || 'ORB analysis'
     };
   } catch (error) {
-    console.error("Error analyzing with AI:", error);
+    console.error("Error analyzing ORB:", error);
+    return null;
+  }
+}
+
+async function analyzeVWAP(
+  symbol: string,
+  data: MarketData,
+  lovableApiKey: string
+): Promise<TradeSignal | null> {
+  try {
+    const priceVsVwap = ((data.price - data.vwap) / data.vwap) * 100;
+    const volumeRatio = data.avgVolume > 0 ? data.volume / data.avgVolume : 1;
+    
+    const prompt = `
+Analyze this VWAP Momentum Bounce setup:
+Symbol: ${symbol}
+Current Price: $${data.price.toFixed(2)}
+VWAP: $${data.vwap.toFixed(2)}
+Price vs VWAP: ${priceVsVwap.toFixed(2)}%
+Volume vs Average: ${(volumeRatio * 100).toFixed(0)}%
+Day High: $${data.high.toFixed(2)}
+Day Low: $${data.low.toFixed(2)}
+
+VWAP Bounce Rules:
+- BUY: Price pulled back to VWAP from above, 9 EMA > 20 EMA, volume spike
+- Stop: Just below VWAP
+- Target: Prior swing high or 3:1 R:R
+- HOLD if conditions not met
+`;
+
+    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${lovableApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash",
+        messages: [
+          {
+            role: "system",
+            content: `You are a professional day trader analyzing VWAP bounce setups. Output ONLY valid JSON:
+{
+  "action": "BUY" | "SELL" | "HOLD",
+  "confidence": 1-10,
+  "qty": number (1-100 shares),
+  "stopLoss": number (just below VWAP),
+  "target1": number (swing high),
+  "target2": number (3:1 R:R),
+  "reason": "brief 1-line explanation"
+}`
+          },
+          { role: "user", content: prompt }
+        ],
+      }),
+    });
+
+    if (!response.ok) return null;
+
+    const aiData = await response.json();
+    const content = aiData.choices?.[0]?.message?.content;
+    
+    if (!content) return null;
+
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return null;
+    
+    const signal = JSON.parse(jsonMatch[0]);
+    return {
+      action: signal.action,
+      symbol,
+      qty: signal.qty || 10,
+      entryPrice: data.price,
+      stopLoss: signal.stopLoss || data.vwap * 0.998,
+      target1: signal.target1 || data.high,
+      target2: signal.target2 || data.price * 1.03,
+      confidence: signal.confidence || 5,
+      reason: signal.reason || 'VWAP bounce analysis'
+    };
+  } catch (error) {
+    console.error("Error analyzing VWAP:", error);
+    return null;
+  }
+}
+
+async function analyzeGapAndGo(
+  symbol: string,
+  data: MarketData,
+  lovableApiKey: string
+): Promise<TradeSignal | null> {
+  try {
+    const prompt = `
+Analyze this Gap & Go setup:
+Symbol: ${symbol}
+Current Price: $${data.price.toFixed(2)}
+Pre-market High: $${data.high.toFixed(2)}
+Pre-market Low: $${data.low.toFixed(2)}
+VWAP: $${data.vwap.toFixed(2)}
+Volume vs Average: ${(data.avgVolume > 0 ? (data.volume / data.avgVolume) * 100 : 100).toFixed(0)}%
+
+Gap & Go Rules:
+- BUY: First pullback hold or pre-market high breakout
+- Risk: Below pre-market low
+- Partial profits: 20% at first target, 40% at second, trail rest
+`;
+
+    const response = await fetch("https://ai.gateway.lovable.dev/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${lovableApiKey}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: "google/gemini-2.5-flash",
+        messages: [
+          {
+            role: "system",
+            content: `You are a professional day trader analyzing Gap & Go setups. Output ONLY valid JSON:
+{
+  "action": "BUY" | "SELL" | "HOLD",
+  "confidence": 1-10,
+  "qty": number (1-100 shares),
+  "stopLoss": number (below pre-market low),
+  "target1": number (20% profit target),
+  "target2": number (40% profit target),
+  "reason": "brief 1-line explanation"
+}`
+          },
+          { role: "user", content: prompt }
+        ],
+      }),
+    });
+
+    if (!response.ok) return null;
+
+    const aiData = await response.json();
+    const content = aiData.choices?.[0]?.message?.content;
+    
+    if (!content) return null;
+
+    const jsonMatch = content.match(/\{[\s\S]*\}/);
+    if (!jsonMatch) return null;
+    
+    const signal = JSON.parse(jsonMatch[0]);
+    return {
+      action: signal.action,
+      symbol,
+      qty: signal.qty || 10,
+      entryPrice: data.price,
+      stopLoss: signal.stopLoss || data.low * 0.99,
+      target1: signal.target1 || data.price * 1.002,
+      target2: signal.target2 || data.price * 1.004,
+      confidence: signal.confidence || 5,
+      reason: signal.reason || 'Gap & Go analysis'
+    };
+  } catch (error) {
+    console.error("Error analyzing Gap & Go:", error);
     return null;
   }
 }
@@ -157,8 +379,8 @@ async function executeTrade(
   secretKey: string,
   isPaper: boolean
 ): Promise<{ success: boolean; orderId?: string; error?: string }> {
-  if (signal.action === 'HOLD' || signal.confidence < 6) {
-    return { success: true, error: 'Signal below confidence threshold or HOLD' };
+  if (signal.action === 'HOLD' || signal.confidence < 7) {
+    return { success: false, error: 'Signal below confidence threshold or HOLD' };
   }
 
   const baseUrl = isPaper 
@@ -166,6 +388,7 @@ async function executeTrade(
     : 'https://api.alpaca.markets';
 
   try {
+    // Place bracket order with stop loss and take profit
     const response = await fetch(`${baseUrl}/v2/orders`, {
       method: 'POST',
       headers: {
@@ -174,11 +397,18 @@ async function executeTrade(
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        symbol: signal.symbol.replace('/', ''),
+        symbol: signal.symbol,
         qty: signal.qty.toString(),
         side: signal.action.toLowerCase(),
         type: 'market',
         time_in_force: 'day',
+        order_class: 'bracket',
+        stop_loss: {
+          stop_price: signal.stopLoss.toFixed(2)
+        },
+        take_profit: {
+          limit_price: signal.target1.toFixed(2)
+        }
       }),
     });
 
@@ -189,7 +419,7 @@ async function executeTrade(
     }
 
     const order = await response.json();
-    console.log(`Order placed: ${order.id} - ${signal.action} ${signal.qty} ${signal.symbol}`);
+    console.log(`Bracket order placed: ${order.id} - ${signal.action} ${signal.qty} ${signal.symbol}`);
     return { success: true, orderId: order.id };
   } catch (error) {
     console.error("Trade execution error:", error);
@@ -202,7 +432,7 @@ serve(async (req) => {
     return new Response(null, { headers: corsHeaders });
   }
 
-  console.log("Auto-trade function triggered at:", new Date().toISOString());
+  console.log("Day trading auto-trade triggered at:", new Date().toISOString());
 
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
@@ -245,23 +475,34 @@ serve(async (req) => {
 
       for (const symbol of strategy.symbols) {
         try {
-          // Get current price
-          const price = await getMarketData(
+          // Get current market data
+          const marketData = await getMarketData(
             symbol, 
             config.api_key_id, 
-            config.secret_key, 
-            config.is_paper_trading
+            config.secret_key
           );
 
-          if (!price) {
-            console.log(`Could not get price for ${symbol}`);
+          if (!marketData) {
+            console.log(`Could not get market data for ${symbol}`);
             continue;
           }
 
-          console.log(`${symbol} current price: $${price}`);
+          console.log(`${symbol} price: $${marketData.price}, VWAP: $${marketData.vwap}`);
 
-          // Analyze with AI
-          const signal = await analyzeWithAI(symbol, price, config.selected_strategy, lovableApiKey);
+          // Analyze based on strategy type
+          let signal: TradeSignal | null = null;
+          
+          switch (strategy.type) {
+            case 'orb':
+              signal = await analyzeORB(symbol, marketData, lovableApiKey);
+              break;
+            case 'vwap':
+              signal = await analyzeVWAP(symbol, marketData, lovableApiKey);
+              break;
+            case 'gap':
+              signal = await analyzeGapAndGo(symbol, marketData, lovableApiKey);
+              break;
+          }
           
           if (!signal) {
             console.log(`No signal generated for ${symbol}`);
@@ -284,7 +525,7 @@ serve(async (req) => {
             symbol: signal.symbol,
             side: signal.action.toLowerCase(),
             qty: signal.qty,
-            price: price,
+            price: signal.entryPrice,
             strategy: config.selected_strategy,
             status: result.success ? 'success' : 'failed',
             error_message: result.error || null,
@@ -295,7 +536,10 @@ serve(async (req) => {
             symbol,
             signal: signal.action,
             confidence: signal.confidence,
+            stopLoss: signal.stopLoss,
+            target1: signal.target1,
             executed: result.success,
+            reason: signal.reason
           });
 
         } catch (error) {
@@ -304,7 +548,7 @@ serve(async (req) => {
       }
     }
 
-    console.log("Auto-trade completed. Results:", results);
+    console.log("Day trading auto-trade completed. Results:", results);
 
     return new Response(
       JSON.stringify({ success: true, results }),

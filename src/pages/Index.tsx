@@ -4,13 +4,16 @@ import { Header } from '@/components/Header';
 import { PortfolioCard } from '@/components/PortfolioCard';
 import { PositionsCard } from '@/components/PositionsCard';
 import { PricesCard } from '@/components/PricesCard';
-import { StrategyCard } from '@/components/StrategyCard';
+import { DayTradingStrategyCard } from '@/components/DayTradingStrategyCard';
 import { TradeCard } from '@/components/TradeCard';
-import { AutoTradingCard } from '@/components/AutoTradingCard';
+import { AutoTradingControlCard } from '@/components/AutoTradingControlCard';
 import { OrdersCard } from '@/components/OrdersCard';
 import { SettingsModal } from '@/components/SettingsModal';
 import { TutorialModal } from '@/components/TutorialModal';
 import { AIAnalyzerCard } from '@/components/AIAnalyzerCard';
+import { RealTimePnL } from '@/components/RealTimePnL';
+import { PreMarketScanner } from '@/components/PreMarketScanner';
+import { RiskSettingsCard } from '@/components/RiskSettingsCard';
 import { useTheme } from '@/hooks/useTheme';
 import { useAuth } from '@/hooks/useAuth';
 import { useTradingConfig } from '@/hooks/useTradingConfig';
@@ -18,6 +21,7 @@ import { useAlpacaData } from '@/hooks/useAlpacaData';
 import { storage } from '@/lib/storage';
 import { AlpacaCredentials } from '@/lib/types';
 import { mockPrices, strategies } from '@/lib/mockData';
+import { dayTradingStrategies, defaultRiskSettings, RiskSettings } from '@/lib/dayTradingStrategies';
 import { toast } from '@/hooks/use-toast';
 import { Loader2 } from 'lucide-react';
 
@@ -33,11 +37,11 @@ const Index = () => {
     updateStrategy, 
     toggleAutoTrading, 
     disconnect,
-    refetch: refetchConfig
   } = useTradingConfig(user?.id);
   
   const [showSettings, setShowSettings] = useState(false);
   const [showTutorial, setShowTutorial] = useState(false);
+  const [riskSettings, setRiskSettings] = useState<RiskSettings>(defaultRiskSettings);
 
   const credentials = config ? {
     apiKeyId: config.apiKeyId,
@@ -45,7 +49,6 @@ const Index = () => {
     isPaperTrading: config.isPaperTrading,
   } : null;
 
-  // Store credentials in local storage for the useAlpacaData hook
   useEffect(() => {
     if (credentials) {
       storage.setCredentials(credentials);
@@ -54,15 +57,32 @@ const Index = () => {
 
   const { account, positions, orders, isLoading: dataLoading, error, refetch } = useAlpacaData(isConnected);
 
+  // Calculate daily P&L
+  const dailyPnL = account?.dayChange || 0;
+  const dailyPnLPercent = account?.dayChangePercent || 0;
+
+  // Check if daily loss limit reached
   useEffect(() => {
-    // Redirect to auth if not authenticated
+    if (dailyPnLPercent < -riskSettings.dailyLossLimit) {
+      setRiskSettings(prev => ({ ...prev, isLocked: true }));
+      if (config?.autoTradingEnabled) {
+        toggleAutoTrading(false);
+        toast({
+          title: "Trading Locked",
+          description: `Daily loss limit of ${riskSettings.dailyLossLimit}% reached. Auto-trading stopped.`,
+          variant: "destructive",
+        });
+      }
+    }
+  }, [dailyPnLPercent, riskSettings.dailyLossLimit]);
+
+  useEffect(() => {
     if (!authLoading && !isAuthenticated) {
       navigate('/auth');
     }
   }, [authLoading, isAuthenticated, navigate]);
 
   useEffect(() => {
-    // Check if first visit
     if (!storage.isTutorialCompleted()) {
       setShowTutorial(true);
     }
@@ -111,6 +131,10 @@ const Index = () => {
     navigate('/auth');
   };
 
+  const handleRiskSettingsChange = (newSettings: Partial<RiskSettings>) => {
+    setRiskSettings(prev => ({ ...prev, ...newSettings }));
+  };
+
   if (authLoading || configLoading) {
     return (
       <div className="min-h-screen bg-background flex items-center justify-center">
@@ -132,7 +156,15 @@ const Index = () => {
       />
 
       <main className="container mx-auto px-4 py-6 space-y-6">
-        {/* Top Row - Portfolio Overview */}
+        {/* Real-time P&L Bar */}
+        <RealTimePnL
+          dailyPnL={dailyPnL}
+          dailyPnLPercent={dailyPnLPercent}
+          riskSettings={riskSettings}
+          isAutoTrading={config?.autoTradingEnabled ?? false}
+        />
+
+        {/* Top Row - Portfolio & Prices */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <PortfolioCard account={account} isLoading={dataLoading} />
           <div className="lg:col-span-2">
@@ -140,30 +172,42 @@ const Index = () => {
           </div>
         </div>
 
-        {/* Middle Row - Trading Controls */}
+        {/* Trading Controls Row */}
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          <TradeCard isConnected={isConnected} />
-          <AutoTradingCard
+          <AutoTradingControlCard
             isEnabled={config?.autoTradingEnabled ?? false}
             onToggle={handleToggleAutoTrading}
             selectedStrategy={config?.selectedStrategy ?? null}
             isConnected={isConnected}
+            tradesToday={riskSettings.tradesToday}
+            maxTrades={riskSettings.maxTradesPerDay}
+            isLocked={riskSettings.isLocked}
           />
-          <StrategyCard
-            strategies={strategies}
+          <DayTradingStrategyCard
+            strategies={dayTradingStrategies}
             selectedStrategy={config?.selectedStrategy ?? null}
             onSelectStrategy={handleSelectStrategy}
           />
+          <RiskSettingsCard
+            settings={riskSettings}
+            onSettingsChange={handleRiskSettingsChange}
+          />
         </div>
 
-        {/* AI Analysis Row */}
-        <AIAnalyzerCard 
-          prices={mockPrices} 
-          strategies={strategies}
-          selectedStrategy={config?.selectedStrategy ?? null}
-        />
+        {/* Pre-Market Scanner */}
+        <PreMarketScanner />
 
-        {/* Bottom Row - Positions & Orders */}
+        {/* Quick Trade & AI Analysis */}
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <TradeCard isConnected={isConnected} />
+          <AIAnalyzerCard 
+            prices={mockPrices} 
+            strategies={strategies}
+            selectedStrategy={config?.selectedStrategy ?? null}
+          />
+        </div>
+
+        {/* Positions & Orders */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
           <PositionsCard positions={positions} isLoading={dataLoading} />
           <OrdersCard orders={orders} isLoading={dataLoading} />
