@@ -62,7 +62,7 @@ export const dayTradingStrategies: DayTradingStrategy[] = [
       'Stop loss at opposite range extreme',
       'Targets: 2:1 and 3:1 risk/reward ratio'
     ],
-    defaultSymbols: ['NVDA', 'TSLA', 'SPY'],
+    defaultSymbols: ['NVDA', 'TSLA', 'AMD', 'META', 'AAPL', 'SMCI', 'SPY', 'QQQ'],
     riskParams: {
       stopLossType: 'Range opposite',
       targets: ['2:1 R:R', '3:1 R:R']

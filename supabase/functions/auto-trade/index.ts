@@ -43,7 +43,7 @@ const strategies: Record<string, {
   type: 'orb' | 'vwap' | 'gap'
 }> = {
   'orb-5min': {
-    symbols: ['NVDA', 'TSLA', 'SPY'],
+    symbols: ['NVDA', 'TSLA', 'AMD', 'META', 'AAPL', 'SMCI', 'SPY', 'QQQ'],
     description: '5-Minute Opening Range Breakout - Trade breakouts from first 5-min candle with volume confirmation',
     type: 'orb'
   },
