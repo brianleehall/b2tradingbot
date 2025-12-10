@@ -1,0 +1,295 @@
+import { useState, useEffect, useCallback } from 'react';
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Badge } from '@/components/ui/badge';
+import { Button } from '@/components/ui/button';
+import { Loader2, RefreshCw, TrendingUp, TrendingDown, AlertTriangle, Sparkles } from 'lucide-react';
+import { supabase } from '@/integrations/supabase/client';
+import { cn } from '@/lib/utils';
+import { getETTime } from '@/lib/orbConfig';
+
+export interface SelectedStock {
+  symbol: string;
+  preMarketChange: number;
+  rvol: number;
+  price: number;
+  avgVolume: number;
+  float?: number;
+  exchange: string;
+  isChecked: boolean;
+}
+
+interface AutoSelectedStocksProps {
+  onStocksChange: (symbols: string[]) => void;
+  disabled?: boolean;
+}
+
+export function AutoSelectedStocks({ onStocksChange, disabled }: AutoSelectedStocksProps) {
+  const [stocks, setStocks] = useState<SelectedStock[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [lastScanTime, setLastScanTime] = useState<string | null>(null);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchStocks = useCallback(async () => {
+    setIsLoading(true);
+    setError(null);
+    
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        setError('Not authenticated');
+        setIsLoading(false);
+        return;
+      }
+
+      const { data, error: fnError } = await supabase.functions.invoke('orb-stock-selector', {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+
+      if (fnError) {
+        console.error('Stock selector error:', fnError);
+        setError(fnError.message);
+        setIsLoading(false);
+        return;
+      }
+
+      if (data.error) {
+        setError(data.error);
+        setIsLoading(false);
+        return;
+      }
+
+      const stocksWithChecked = (data.stocks || []).map((stock: Omit<SelectedStock, 'isChecked'>) => ({
+        ...stock,
+        isChecked: true, // All checked by default
+      }));
+
+      setStocks(stocksWithChecked);
+      setLastScanTime(data.scannedAt);
+      setMessage(data.message || null);
+
+      // Notify parent of selected symbols
+      const checkedSymbols = stocksWithChecked
+        .filter((s: SelectedStock) => s.isChecked)
+        .map((s: SelectedStock) => s.symbol);
+      onStocksChange(checkedSymbols);
+
+    } catch (err) {
+      console.error('Failed to fetch stocks:', err);
+      setError(err instanceof Error ? err.message : 'Failed to fetch stocks');
+    } finally {
+      setIsLoading(false);
+    }
+  }, [onStocksChange]);
+
+  // Initial fetch on mount
+  useEffect(() => {
+    fetchStocks();
+  }, [fetchStocks]);
+
+  // Auto-refresh at 9:15 AM ET
+  useEffect(() => {
+    const checkAndRefresh = () => {
+      const et = getETTime();
+      const hours = et.getHours();
+      const minutes = et.getMinutes();
+      const day = et.getDay();
+
+      // Only on weekdays at exactly 9:15 AM ET
+      if (day !== 0 && day !== 6 && hours === 9 && minutes === 15) {
+        console.log('Auto-refreshing stock selection at 9:15 AM ET');
+        fetchStocks();
+      }
+    };
+
+    // Check every minute
+    const interval = setInterval(checkAndRefresh, 60000);
+    
+    return () => clearInterval(interval);
+  }, [fetchStocks]);
+
+  const toggleStock = (symbol: string) => {
+    if (disabled) return;
+
+    setStocks(prev => {
+      const updated = prev.map(s => 
+        s.symbol === symbol ? { ...s, isChecked: !s.isChecked } : s
+      );
+      
+      // Notify parent of change
+      const checkedSymbols = updated
+        .filter(s => s.isChecked)
+        .map(s => s.symbol);
+      onStocksChange(checkedSymbols);
+      
+      return updated;
+    });
+  };
+
+  const formatVolume = (vol: number) => {
+    if (vol >= 1000000) return `${(vol / 1000000).toFixed(1)}M`;
+    if (vol >= 1000) return `${(vol / 1000).toFixed(0)}K`;
+    return vol.toString();
+  };
+
+  const formatTime = (isoString: string) => {
+    const date = new Date(isoString);
+    return date.toLocaleTimeString('en-US', { 
+      hour: '2-digit', 
+      minute: '2-digit',
+      timeZone: 'America/New_York'
+    }) + ' ET';
+  };
+
+  const checkedCount = stocks.filter(s => s.isChecked).length;
+
+  return (
+    <Card className="border-2 border-primary/30 bg-gradient-to-br from-primary/5 to-transparent">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="p-2 bg-primary/20 rounded-lg">
+              <Sparkles className="h-6 w-6 text-primary" />
+            </div>
+            <div>
+              <CardTitle className="text-xl font-bold">
+                TODAY'S ORB STOCKS
+              </CardTitle>
+              <p className="text-sm text-muted-foreground">
+                (auto-selected)
+              </p>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {lastScanTime && (
+              <span className="text-xs text-muted-foreground">
+                Last scan: {formatTime(lastScanTime)}
+              </span>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={fetchStocks}
+              disabled={isLoading}
+            >
+              <RefreshCw className={cn("h-4 w-4", isLoading && "animate-spin")} />
+            </Button>
+          </div>
+        </div>
+      </CardHeader>
+      <CardContent>
+        {isLoading ? (
+          <div className="flex items-center justify-center py-12">
+            <Loader2 className="h-8 w-8 animate-spin text-primary" />
+            <span className="ml-3 text-muted-foreground">Scanning pre-market...</span>
+          </div>
+        ) : error ? (
+          <div className="flex items-center justify-center py-8 text-destructive">
+            <AlertTriangle className="h-5 w-5 mr-2" />
+            <span>{error}</span>
+          </div>
+        ) : message && stocks.length < 3 ? (
+          <div className="flex items-center justify-center py-8 bg-amber-500/10 rounded-lg border border-amber-500/30">
+            <AlertTriangle className="h-6 w-6 text-amber-500 mr-3" />
+            <span className="text-amber-500 font-medium text-lg">{message}</span>
+          </div>
+        ) : (
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+              {stocks.map((stock) => (
+                <div
+                  key={stock.symbol}
+                  onClick={() => toggleStock(stock.symbol)}
+                  className={cn(
+                    "relative p-4 rounded-xl border-2 cursor-pointer transition-all duration-200",
+                    stock.isChecked
+                      ? "bg-primary/10 border-primary shadow-lg shadow-primary/20"
+                      : "bg-muted/30 border-border opacity-60 hover:opacity-80",
+                    disabled && "cursor-not-allowed"
+                  )}
+                >
+                  {/* Checkbox */}
+                  <div className="absolute top-3 right-3">
+                    <Checkbox
+                      checked={stock.isChecked}
+                      disabled={disabled}
+                      className="h-5 w-5"
+                    />
+                  </div>
+
+                  {/* Ticker Symbol - Big */}
+                  <div className="mb-3">
+                    <span className="text-3xl font-bold font-mono tracking-tight">
+                      {stock.symbol}
+                    </span>
+                    <Badge 
+                      variant="outline" 
+                      className="ml-2 text-xs"
+                    >
+                      {stock.exchange}
+                    </Badge>
+                  </div>
+
+                  {/* Pre-market Change */}
+                  <div className="flex items-center gap-2 mb-2">
+                    {stock.preMarketChange >= 0 ? (
+                      <TrendingUp className="h-5 w-5 text-emerald-500" />
+                    ) : (
+                      <TrendingDown className="h-5 w-5 text-red-500" />
+                    )}
+                    <span className={cn(
+                      "text-2xl font-bold",
+                      stock.preMarketChange >= 0 ? "text-emerald-500" : "text-red-500"
+                    )}>
+                      {stock.preMarketChange >= 0 ? '+' : ''}{stock.preMarketChange.toFixed(2)}%
+                    </span>
+                  </div>
+
+                  {/* RVOL */}
+                  <div className="flex items-center justify-between text-sm">
+                    <span className="text-muted-foreground">RVOL</span>
+                    <span className={cn(
+                      "font-bold text-lg",
+                      stock.rvol >= 5 ? "text-amber-500" : 
+                      stock.rvol >= 3.5 ? "text-primary" : "text-foreground"
+                    )}>
+                      {stock.rvol.toFixed(1)}x
+                    </span>
+                  </div>
+
+                  {/* Price & Volume */}
+                  <div className="flex items-center justify-between text-sm mt-1 text-muted-foreground">
+                    <span>${stock.price.toFixed(2)}</span>
+                    <span>Vol: {formatVolume(stock.avgVolume)}</span>
+                  </div>
+
+                  {/* Float */}
+                  {stock.float && (
+                    <div className="text-xs text-muted-foreground mt-1">
+                      Float: {stock.float}M
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Summary */}
+            <div className="mt-4 pt-4 border-t border-border flex items-center justify-between">
+              <div className="text-sm text-muted-foreground">
+                <span className="font-medium text-foreground">{checkedCount}</span> of {stocks.length} stocks selected for trading
+              </div>
+              <div className="flex gap-2 text-xs">
+                <Badge variant="secondary">RVOL ≥ 3.0</Badge>
+                <Badge variant="secondary">Change ≥ ±2%</Badge>
+                <Badge variant="secondary">Float ≤ 100M</Badge>
+              </div>
+            </div>
+          </>
+        )}
+      </CardContent>
+    </Card>
+  );
+}

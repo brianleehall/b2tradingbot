@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Header } from '@/components/Header';
 import { PortfolioCard } from '@/components/PortfolioCard';
@@ -12,7 +12,7 @@ import { SettingsModal } from '@/components/SettingsModal';
 import { TutorialModal } from '@/components/TutorialModal';
 import { AIAnalyzerCard } from '@/components/AIAnalyzerCard';
 import { RealTimePnL } from '@/components/RealTimePnL';
-import { PreMarketScanner } from '@/components/PreMarketScanner';
+import { AutoSelectedStocks } from '@/components/orb/AutoSelectedStocks';
 import { RiskSettingsCard } from '@/components/RiskSettingsCard';
 import { useTheme } from '@/hooks/useTheme';
 import { useAuth } from '@/hooks/useAuth';
@@ -42,6 +42,13 @@ const Index = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [showTutorial, setShowTutorial] = useState(false);
   const [riskSettings, setRiskSettings] = useState<RiskSettings>(defaultRiskSettings);
+  const [activeORBTickers, setActiveORBTickers] = useState<string[]>([]);
+
+  // Handler for when auto-selected stocks change
+  const handleORBStocksChange = useCallback((symbols: string[]) => {
+    setActiveORBTickers(symbols);
+    console.log('Active ORB tickers updated:', symbols);
+  }, []);
 
   const credentials = config ? {
     apiKeyId: config.apiKeyId,
@@ -191,8 +198,11 @@ const Index = () => {
           />
         </div>
 
-        {/* Pre-Market Scanner */}
-        <PreMarketScanner />
+        {/* Auto-Selected ORB Stocks - The main feature */}
+        <AutoSelectedStocks 
+          onStocksChange={handleORBStocksChange}
+          disabled={config?.autoTradingEnabled}
+        />
 
         {/* Quick Trade & AI Analysis */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">

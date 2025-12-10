@@ -5,3 +5,15 @@ verify_jwt = true
 
 [functions.orb-trading]
 verify_jwt = true
+
+[functions.orb-stock-selector]
+verify_jwt = false
+
+[functions.gap-scanner]
+verify_jwt = false
+
+[functions.auto-trade]
+verify_jwt = true
+
+[functions.analyze-strategy]
+verify_jwt = false
