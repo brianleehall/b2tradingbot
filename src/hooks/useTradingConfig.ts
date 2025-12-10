@@ -24,28 +24,28 @@ export function useTradingConfig(userId: string | undefined) {
     }
 
     try {
+      // Use the decryption function to get decrypted credentials
       const { data, error } = await supabase
-        .from('trading_configurations')
-        .select('*')
-        .eq('user_id', userId)
-        .maybeSingle();
+        .rpc('get_decrypted_trading_config', { p_user_id: userId });
 
       if (error) throw error;
 
-      if (data) {
+      if (data && data.length > 0) {
+        const configData = data[0];
         setConfig({
-          id: data.id,
-          apiKeyId: data.api_key_id,
-          secretKey: data.secret_key,
-          isPaperTrading: data.is_paper_trading,
-          selectedStrategy: data.selected_strategy,
-          autoTradingEnabled: data.auto_trading_enabled,
+          id: configData.id,
+          apiKeyId: configData.api_key_id,
+          secretKey: configData.secret_key,
+          isPaperTrading: configData.is_paper_trading,
+          selectedStrategy: configData.selected_strategy,
+          autoTradingEnabled: configData.auto_trading_enabled,
         });
       } else {
         setConfig(null);
       }
     } catch (error) {
       console.error('Error fetching trading config:', error);
+      setConfig(null);
     } finally {
       setIsLoading(false);
     }
