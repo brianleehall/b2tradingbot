@@ -334,48 +334,44 @@ serve(async (req) => {
     console.log(`Market regime: ${marketRegime} (SPY: $${spyData?.currentPrice?.toFixed(2) || 'N/A'}, 200-SMA: $${spyData?.sma200?.toFixed(2) || 'N/A'})`);
 
     // Scan all stocks in universe
-    const qualifiedStocks: SelectedStock[] = [];
+
+    // Collect all stock data first
+    const allStockData: SelectedStock[] = [];
 
     for (const symbol of SCAN_UNIVERSE) {
       const metadata = STOCK_METADATA[symbol];
-      const floatLimit = 500; // Relaxed from 100M to 500M for more candidates
       
-      // Skip if no metadata or float > limit
-      if (!metadata || metadata.float > floatLimit) {
+      // Skip if no metadata
+      if (!metadata) {
+        console.log(`${symbol}: No metadata, skipping`);
         continue;
       }
 
       const data = await getPreMarketData(symbol, apiKeyId, secretKey);
-      if (!data) continue;
+      if (!data) {
+        console.log(`${symbol}: No data from API, skipping`);
+        continue;
+      }
 
       const { currentPrice, previousClose, preMarketVolume, avgVolume } = data;
 
       // Calculate metrics
-      const preMarketChange = previousClose > 0 
+      const dailyChange = previousClose > 0 
         ? ((currentPrice - previousClose) / previousClose) * 100 
         : 0;
       
-      // RVOL = pre-market volume / (avg daily volume / trading minutes ratio)
+      // RVOL calculation
       const expectedPreMarketVolume = avgVolume * 0.15;
-      const rvol = expectedPreMarketVolume > 0 ? preMarketVolume / expectedPreMarketVolume : 0;
+      const rvol = expectedPreMarketVolume > 0 ? preMarketVolume / expectedPreMarketVolume : 1;
 
-      // Relaxed selection criteria:
-      // - RVOL >= 1.5 (relaxed from 3.0)
-      // - Pre-market change >= ±1.5% (relaxed from 2.0%)
-      // - Avg daily volume >= 500,000 (relaxed from 1M)
-      // - Current price >= $10 (relaxed from $20)
-      // - Float <= 500M (relaxed from 100M)
-      
-      if (
-        rvol >= 1.5 &&
-        Math.abs(preMarketChange) >= 1.5 &&
-        avgVolume >= 500000 &&
-        currentPrice >= 10
-      ) {
-        qualifiedStocks.push({
+      console.log(`${symbol}: price=$${currentPrice?.toFixed(2)}, change=${dailyChange.toFixed(2)}%, rvol=${rvol.toFixed(2)}, avgVol=${avgVolume}`);
+
+      // Add all stocks with valid data
+      if (currentPrice > 0 && avgVolume > 0) {
+        allStockData.push({
           symbol,
-          preMarketChange: Math.round(preMarketChange * 100) / 100,
-          rvol: Math.round(rvol * 100) / 100,
+          preMarketChange: Math.round(dailyChange * 100) / 100,
+          rvol: Math.round(Math.max(rvol, 1) * 100) / 100, // Minimum RVOL of 1
           price: Math.round(currentPrice * 100) / 100,
           avgVolume: Math.round(avgVolume),
           float: metadata.float,
@@ -387,11 +383,11 @@ serve(async (req) => {
       await new Promise(resolve => setTimeout(resolve, 100));
     }
 
-    // Sort by RVOL (highest first) and take top 6
-    qualifiedStocks.sort((a, b) => b.rvol - a.rvol);
-    const topStocks = qualifiedStocks.slice(0, 6);
-
-    console.log(`Found ${qualifiedStocks.length} qualified stocks, returning top ${topStocks.length}`);
+    // Sort by absolute daily change (most volatile first) and take top 6
+    allStockData.sort((a, b) => Math.abs(b.preMarketChange) - Math.abs(a.preMarketChange));
+    const topStocks = allStockData.slice(0, 6);
+    
+    console.log(`Found ${allStockData.length} stocks with data, returning top ${topStocks.length}`);
 
     const result: ScanResult = {
       stocks: topStocks,
@@ -401,7 +397,7 @@ serve(async (req) => {
       spy200SMA: spyData?.sma200,
     };
 
-    if (topStocks.length < 3) {
+    if (topStocks.length === 0) {
       result.message = "Waiting for better setups today – no trades yet";
     }
 
