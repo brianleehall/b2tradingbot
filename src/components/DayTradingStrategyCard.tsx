@@ -7,6 +7,7 @@ interface DayTradingStrategyCardProps {
   strategies: DayTradingStrategy[];
   selectedStrategy: string | null;
   onSelectStrategy: (strategyId: string) => void;
+  activeORBTickers?: string[];
 }
 
 const iconMap = {
@@ -18,7 +19,8 @@ const iconMap = {
 export function DayTradingStrategyCard({ 
   strategies, 
   selectedStrategy, 
-  onSelectStrategy 
+  onSelectStrategy,
+  activeORBTickers = []
 }: DayTradingStrategyCardProps) {
   return (
     <Card className="glass">
@@ -79,7 +81,21 @@ export function DayTradingStrategyCard({
                             <span>Stop: {strategy.riskParams.stopLossType}</span>
                           </div>
                           <div className="flex flex-wrap gap-1 mt-2">
-                            {strategy.defaultSymbols.length > 0 ? (
+                            {/* Show auto-selected tickers for ORB strategy, else show default */}
+                            {strategy.id === 'orb-5min' && activeORBTickers.length > 0 ? (
+                              activeORBTickers.map(sym => (
+                                <span 
+                                  key={sym}
+                                  className="text-[10px] px-1.5 py-0.5 rounded bg-primary/20 text-primary font-mono"
+                                >
+                                  {sym}
+                                </span>
+                              ))
+                            ) : strategy.id === 'orb-5min' ? (
+                              <span className="text-[10px] px-1.5 py-0.5 rounded bg-warning/20 text-warning">
+                                Waiting for auto-selection...
+                              </span>
+                            ) : strategy.defaultSymbols.length > 0 ? (
                               strategy.defaultSymbols.map(sym => (
                                 <span 
                                   key={sym}

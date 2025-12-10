@@ -205,6 +205,7 @@ const Index = () => {
             strategies={dayTradingStrategies}
             selectedStrategy={config?.selectedStrategy ?? null}
             onSelectStrategy={handleSelectStrategy}
+            activeORBTickers={activeORBTickers}
           />
           <RiskSettingsCard
             settings={riskSettings}
