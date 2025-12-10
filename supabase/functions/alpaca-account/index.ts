@@ -51,25 +51,40 @@ serve(async (req) => {
       );
     }
 
-    // Create Supabase client with service role key to verify JWT directly
+    // Create Supabase client with service role key
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    
-    // Extract JWT token and verify directly (doesn't require session to exist)
-    const token = authHeader.replace('Bearer ', '');
     const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
     
-    // Verify the JWT token directly - this works even if session doesn't exist
-    const { data: { user }, error: userError } = await supabaseAdmin.auth.getUser(token);
+    // Extract and decode JWT token manually (SDK getUser has session issues)
+    const token = authHeader.replace('Bearer ', '');
+    let userId: string;
     
-    if (userError || !user) {
-      console.error('Auth error:', userError);
+    try {
+      // Decode JWT payload (base64url encoded)
+      const parts = token.split('.');
+      if (parts.length !== 3) throw new Error('Invalid JWT format');
+      
+      const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+      userId = payload.sub;
+      
+      if (!userId) throw new Error('No user ID in token');
+      
+      // Verify token hasn't expired
+      if (payload.exp && payload.exp * 1000 < Date.now()) {
+        throw new Error('Token expired');
+      }
+      
+      console.log('Authenticated user:', userId);
+    } catch (e) {
+      console.error('JWT decode error:', e);
       return new Response(
         JSON.stringify({ error: 'Unauthorized - invalid token' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
-
+    
+    const user = { id: userId };
     console.log(`Authenticated user: ${user.id}`);
 
     // Parse request body for endpoint

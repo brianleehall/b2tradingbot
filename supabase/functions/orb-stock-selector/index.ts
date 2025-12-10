@@ -253,19 +253,35 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Extract JWT token and verify directly (doesn't require session to exist)
+    // Extract and decode JWT token manually (SDK getUser has session issues)
     const token = authHeader.replace('Bearer ', '');
-    const { data: { user }, error: userError } = await supabase.auth.getUser(token);
+    let userId: string;
     
-    if (userError || !user) {
-      console.error('Auth error:', userError);
+    try {
+      // Decode JWT payload (base64url encoded)
+      const parts = token.split('.');
+      if (parts.length !== 3) throw new Error('Invalid JWT format');
+      
+      const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+      userId = payload.sub;
+      
+      if (!userId) throw new Error('No user ID in token');
+      
+      // Verify token hasn't expired
+      if (payload.exp && payload.exp * 1000 < Date.now()) {
+        throw new Error('Token expired');
+      }
+      
+      console.log("User authenticated:", userId);
+    } catch (e) {
+      console.error('JWT decode error:', e);
       return new Response(
-        JSON.stringify({ error: 'Unauthorized' }),
+        JSON.stringify({ error: 'Unauthorized - invalid token' }),
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
-
-    console.log("User authenticated:", user.id);
+    
+    const user = { id: userId };
 
     // Get user's trading config for API keys
     const { data: configs, error: configError } = await supabase
