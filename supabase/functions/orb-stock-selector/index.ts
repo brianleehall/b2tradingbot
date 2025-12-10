@@ -368,17 +368,14 @@ serve(async (req) => {
         console.log(`  ${symbol}: Close=$${yesterdayClose.toFixed(2)}, Change=${priceChange.toFixed(1)}%, RVOL=${rvol.toFixed(2)}x, AvgVol=${(avgVolume30d/1000000).toFixed(1)}M, Float=${stockFloat}M`);
       }
 
-      // FILTER 2: RVOL ≥ 2.5
-      if (rvol < 2.5) {
-        if (isKeyStock) console.log(`    FAIL: RVOL ${rvol.toFixed(2)} < 2.5`);
+      // FILTER 2: RVOL ≥ 0.4 (relaxed to include major stocks on normal days)
+      if (rvol < 0.4) {
+        if (isKeyStock) console.log(`    FAIL: RVOL ${rvol.toFixed(2)} < 0.4`);
         continue;
       }
 
-      // FILTER 3: Price change ≥ ±3%
-      if (Math.abs(priceChange) < 3.0) {
-        if (isKeyStock) console.log(`    FAIL: Change ${Math.abs(priceChange).toFixed(1)}% < 3%`);
-        continue;
-      }
+      // FILTER 3: Price change - NO MINIMUM (removed to include stocks on low-movement days)
+      // Stocks with any movement are acceptable
 
       // FILTER 4: 30-day avg volume ≥ 800,000
       if (avgVolume30d < 800000) {
