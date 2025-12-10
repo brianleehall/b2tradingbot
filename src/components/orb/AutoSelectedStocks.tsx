@@ -274,13 +274,21 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
             <AlertTriangle className="h-5 w-5 mr-2" />
             <span>{error}</span>
           </div>
-        ) : message && stocks.length < 3 ? (
-          <div className="flex items-center justify-center py-8 bg-amber-500/10 rounded-lg border border-amber-500/30">
-            <AlertTriangle className="h-6 w-6 text-amber-500 mr-3" />
-            <span className="text-amber-500 font-medium text-lg">{message}</span>
-          </div>
         ) : (
           <>
+            {/* Fallback Warning Banner */}
+            {message && stocks.some(s => s.isFallback) && (
+              <div className="flex items-center gap-3 mb-4 p-4 bg-amber-500/10 rounded-lg border border-amber-500/30">
+                <AlertTriangle className="h-6 w-6 text-amber-500 shrink-0" />
+                <div>
+                  <span className="text-amber-500 font-semibold">{message}</span>
+                  <p className="text-sm text-amber-500/80 mt-1">
+                    Fallback stocks: {stocks.filter(s => s.isFallback).map(s => s.symbol).join(', ')}
+                  </p>
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
               {stocks.map((stock) => (
                 <div
@@ -288,8 +296,11 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
                   onClick={() => toggleStock(stock.symbol)}
                   className={cn(
                     "relative p-4 rounded-xl border-2 cursor-pointer transition-all duration-200",
-                    stock.isChecked
+                    stock.isFallback && "border-amber-500/50",
+                    stock.isChecked && !stock.isFallback
                       ? "bg-primary/10 border-primary shadow-lg shadow-primary/20"
+                      : stock.isChecked && stock.isFallback
+                      ? "bg-amber-500/10 border-amber-500/50 shadow-lg shadow-amber-500/20"
                       : "bg-muted/30 border-border opacity-60 hover:opacity-80",
                     disabled && "cursor-not-allowed"
                   )}
@@ -316,7 +327,7 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
                     </Badge>
                     {stock.isFallback && (
                       <Badge variant="secondary" className="ml-2 text-xs bg-amber-500/20 text-amber-500 border-amber-500/30">
-                        Fallback
+                        FALLBACK
                       </Badge>
                     )}
                   </div>
@@ -369,6 +380,11 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
             <div className="mt-4 pt-4 border-t border-border flex items-center justify-between">
               <div className="text-sm text-muted-foreground">
                 <span className="font-medium text-foreground">{checkedCount}</span> of {stocks.length} stocks selected for trading
+                {stocks.some(s => s.isFallback) && (
+                  <span className="text-amber-500 ml-2">
+                    ({stocks.filter(s => s.isFallback).length} fallback{stocks.filter(s => s.isFallback).length > 1 ? 's' : ''})
+                  </span>
+                )}
               </div>
               <div className="flex gap-2 text-xs flex-wrap">
                 <Badge variant="secondary">RVOL ≥ 2.5x</Badge>
