@@ -5,3 +5,6 @@ verify_jwt = false
 
 [functions.alpaca-account]
 verify_jwt = false
+
+[functions.auto-trade]
+verify_jwt = false

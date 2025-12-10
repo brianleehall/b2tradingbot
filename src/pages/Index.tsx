@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useNavigate } from 'react-router-dom';
 import { Header } from '@/components/Header';
 import { PortfolioCard } from '@/components/PortfolioCard';
 import { PositionsCard } from '@/components/PositionsCard';
@@ -11,42 +12,60 @@ import { SettingsModal } from '@/components/SettingsModal';
 import { TutorialModal } from '@/components/TutorialModal';
 import { AIAnalyzerCard } from '@/components/AIAnalyzerCard';
 import { useTheme } from '@/hooks/useTheme';
+import { useAuth } from '@/hooks/useAuth';
+import { useTradingConfig } from '@/hooks/useTradingConfig';
 import { useAlpacaData } from '@/hooks/useAlpacaData';
 import { storage } from '@/lib/storage';
 import { AlpacaCredentials } from '@/lib/types';
 import { mockPrices, strategies } from '@/lib/mockData';
 import { toast } from '@/hooks/use-toast';
+import { Loader2 } from 'lucide-react';
 
 const Index = () => {
+  const navigate = useNavigate();
   const { theme, toggleTheme } = useTheme();
+  const { user, isLoading: authLoading, signOut, isAuthenticated } = useAuth();
+  const { 
+    config, 
+    isLoading: configLoading, 
+    isConnected, 
+    saveCredentials, 
+    updateStrategy, 
+    toggleAutoTrading, 
+    disconnect,
+    refetch: refetchConfig
+  } = useTradingConfig(user?.id);
+  
   const [showSettings, setShowSettings] = useState(false);
   const [showTutorial, setShowTutorial] = useState(false);
-  const [isConnected, setIsConnected] = useState(false);
-  const [selectedStrategy, setSelectedStrategy] = useState<string | null>(null);
-  const [isAutoTrading, setIsAutoTrading] = useState(false);
 
-  const { account, positions, orders, isLoading, error, refetch } = useAlpacaData(isConnected);
+  const credentials = config ? {
+    apiKeyId: config.apiKeyId,
+    secretKey: config.secretKey,
+    isPaperTrading: config.isPaperTrading,
+  } : null;
+
+  // Store credentials in local storage for the useAlpacaData hook
+  useEffect(() => {
+    if (credentials) {
+      storage.setCredentials(credentials);
+    }
+  }, [credentials]);
+
+  const { account, positions, orders, isLoading: dataLoading, error, refetch } = useAlpacaData(isConnected);
+
+  useEffect(() => {
+    // Redirect to auth if not authenticated
+    if (!authLoading && !isAuthenticated) {
+      navigate('/auth');
+    }
+  }, [authLoading, isAuthenticated, navigate]);
 
   useEffect(() => {
     // Check if first visit
     if (!storage.isTutorialCompleted()) {
       setShowTutorial(true);
     }
-
-    // Check for existing credentials
-    const credentials = storage.getCredentials();
-    if (credentials) {
-      setIsConnected(true);
-    }
-
-    // Load saved strategy
-    const savedStrategy = storage.getSelectedStrategy();
-    if (savedStrategy) {
-      setSelectedStrategy(savedStrategy);
-    }
-
-    // Load auto-trading state
-    setIsAutoTrading(storage.isAutoTradingEnabled());
   }, []);
 
   useEffect(() => {
@@ -59,32 +78,46 @@ const Index = () => {
     }
   }, [error]);
 
-  const handleConnect = (credentials: AlpacaCredentials) => {
-    setIsConnected(true);
-    refetch();
+  const handleConnect = async (creds: AlpacaCredentials) => {
+    const success = await saveCredentials(creds);
+    if (success) {
+      storage.setCredentials(creds);
+      refetch();
+    }
   };
 
-  const handleDisconnect = () => {
+  const handleDisconnect = async () => {
+    await disconnect();
     storage.clearCredentials();
-    setIsConnected(false);
-    setIsAutoTrading(false);
-    storage.setAutoTrading(false);
   };
 
-  const handleSelectStrategy = (strategyId: string) => {
-    setSelectedStrategy(strategyId);
+  const handleSelectStrategy = async (strategyId: string) => {
+    await updateStrategy(strategyId);
     storage.setSelectedStrategy(strategyId);
   };
 
-  const handleToggleAutoTrading = (enabled: boolean) => {
-    setIsAutoTrading(enabled);
-    storage.setAutoTrading(enabled);
+  const handleToggleAutoTrading = async (enabled: boolean) => {
+    await toggleAutoTrading(enabled);
   };
 
   const handleTutorialComplete = () => {
     storage.setTutorialCompleted();
     setShowTutorial(false);
   };
+
+  const handleSignOut = async () => {
+    await signOut();
+    storage.clearCredentials();
+    navigate('/auth');
+  };
+
+  if (authLoading || configLoading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <Loader2 className="w-8 h-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
@@ -94,12 +127,14 @@ const Index = () => {
         onOpenSettings={() => setShowSettings(true)}
         isConnected={isConnected}
         onDisconnect={handleDisconnect}
+        onSignOut={handleSignOut}
+        userEmail={user?.email}
       />
 
       <main className="container mx-auto px-4 py-6 space-y-6">
         {/* Top Row - Portfolio Overview */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <PortfolioCard account={account} isLoading={isLoading} />
+          <PortfolioCard account={account} isLoading={dataLoading} />
           <div className="lg:col-span-2">
             <PricesCard prices={mockPrices} />
           </div>
@@ -109,14 +144,14 @@ const Index = () => {
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
           <TradeCard isConnected={isConnected} />
           <AutoTradingCard
-            isEnabled={isAutoTrading}
+            isEnabled={config?.autoTradingEnabled ?? false}
             onToggle={handleToggleAutoTrading}
-            selectedStrategy={selectedStrategy}
+            selectedStrategy={config?.selectedStrategy ?? null}
             isConnected={isConnected}
           />
           <StrategyCard
             strategies={strategies}
-            selectedStrategy={selectedStrategy}
+            selectedStrategy={config?.selectedStrategy ?? null}
             onSelectStrategy={handleSelectStrategy}
           />
         </div>
@@ -125,13 +160,13 @@ const Index = () => {
         <AIAnalyzerCard 
           prices={mockPrices} 
           strategies={strategies}
-          selectedStrategy={selectedStrategy}
+          selectedStrategy={config?.selectedStrategy ?? null}
         />
 
         {/* Bottom Row - Positions & Orders */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <PositionsCard positions={positions} isLoading={isLoading} />
-          <OrdersCard orders={orders} isLoading={isLoading} />
+          <PositionsCard positions={positions} isLoading={dataLoading} />
+          <OrdersCard orders={orders} isLoading={dataLoading} />
         </div>
       </main>
 
@@ -139,6 +174,7 @@ const Index = () => {
         open={showSettings}
         onClose={() => setShowSettings(false)}
         onConnect={handleConnect}
+        existingConfig={config}
       />
 
       <TutorialModal
