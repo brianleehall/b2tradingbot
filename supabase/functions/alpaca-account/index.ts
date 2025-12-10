@@ -50,18 +50,16 @@ serve(async (req) => {
       );
     }
 
-    // Create Supabase client with the user's JWT
+    // Create Supabase client with service role key to verify JWT directly
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     
-    // Use the user's JWT to get their identity
-    const supabaseUser = createClient(supabaseUrl, supabaseAnonKey, {
-      global: { headers: { Authorization: authHeader } }
-    });
-
-    // Get the authenticated user
-    const { data: { user }, error: userError } = await supabaseUser.auth.getUser();
+    // Extract JWT token and verify directly (doesn't require session to exist)
+    const token = authHeader.replace('Bearer ', '');
+    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+    
+    // Verify the JWT token directly - this works even if session doesn't exist
+    const { data: { user }, error: userError } = await supabaseAdmin.auth.getUser(token);
     
     if (userError || !user) {
       console.error('Auth error:', userError);
@@ -83,8 +81,7 @@ serve(async (req) => {
       );
     }
 
-    // Use service role to get decrypted credentials via the secure function
-    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+    // Use the already-created admin client to get decrypted credentials
     
     const { data: configData, error: configError } = await supabaseAdmin
       .rpc('get_decrypted_trading_config', { p_user_id: user.id });
