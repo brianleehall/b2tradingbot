@@ -126,6 +126,77 @@ async function getORBRange(
   }
 }
 
+// Get SPY 200-day SMA and current price for market regime detection
+async function getSPYRegime(apiKeyId: string, secretKey: string): Promise<{ 
+  spyPrice: number; 
+  sma200: number; 
+  regime: 'bullish' | 'bearish' 
+}> {
+  try {
+    const polygonKey = Deno.env.get('POLYGON_API_KEY');
+    
+    // Get SPY current price from Alpaca
+    const tradeResponse = await fetch(
+      'https://data.alpaca.markets/v2/stocks/SPY/trades/latest',
+      {
+        headers: {
+          'APCA-API-KEY-ID': apiKeyId,
+          'APCA-API-SECRET-KEY': secretKey,
+        },
+      }
+    );
+    
+    let spyPrice = 0;
+    if (tradeResponse.ok) {
+      const tradeData = await tradeResponse.json();
+      spyPrice = tradeData.trade?.p || 0;
+    }
+    
+    // Get 200-day SMA from Polygon
+    let sma200 = 0;
+    if (polygonKey) {
+      // Get last 200 trading days of SPY data
+      const endDate = new Date();
+      const startDate = new Date();
+      startDate.setDate(startDate.getDate() - 300); // Buffer for non-trading days
+      
+      const startStr = startDate.toISOString().split('T')[0];
+      const endStr = endDate.toISOString().split('T')[0];
+      
+      const smaResponse = await fetch(
+        `https://api.polygon.io/v2/aggs/ticker/SPY/range/1/day/${startStr}/${endStr}?adjusted=true&sort=desc&limit=200&apiKey=${polygonKey}`
+      );
+      
+      if (smaResponse.ok) {
+        const smaData = await smaResponse.json();
+        const bars = smaData.results || [];
+        
+        if (bars.length >= 200) {
+          // Calculate 200-day SMA from closing prices
+          const sum = bars.slice(0, 200).reduce((acc: number, bar: any) => acc + bar.c, 0);
+          sma200 = sum / 200;
+          console.log(`SPY: $${spyPrice.toFixed(2)}, 200-SMA: $${sma200.toFixed(2)}`);
+        } else {
+          console.log(`Only got ${bars.length} bars for SPY SMA calculation`);
+          // Fallback: use 200 if we can't calculate
+          sma200 = spyPrice * 0.95; // Assume bullish if we can't calculate
+        }
+      }
+    } else {
+      console.log('No POLYGON_API_KEY - defaulting to bullish regime');
+      sma200 = spyPrice * 0.95; // Default to bullish if no API key
+    }
+    
+    const regime = spyPrice > sma200 ? 'bullish' : 'bearish';
+    console.log(`Market Regime: ${regime.toUpperCase()} (SPY ${spyPrice > sma200 ? 'above' : 'below'} 200-SMA)`);
+    
+    return { spyPrice, sma200, regime };
+  } catch (error) {
+    console.error('Error fetching SPY regime:', error);
+    return { spyPrice: 0, sma200: 0, regime: 'bullish' }; // Default to bullish on error
+  }
+}
+
 // Get VIX level at 9:30 AM
 async function getVIXLevel(apiKeyId: string, secretKey: string): Promise<number> {
   try {
@@ -710,11 +781,24 @@ serve(async (req) => {
     }
 
     // =====================
+    // ACTION: GET MARKET REGIME
+    // =====================
+    if (action === 'get_market_regime') {
+      const regimeData = await getSPYRegime(apiKeyId, secretKey);
+      
+      return new Response(
+        JSON.stringify(regimeData),
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // =====================
     // ACTION: GET SESSION STATE
     // =====================
     if (action === 'get_session_state') {
       const vixLevel = await getVIXLevel(apiKeyId, secretKey);
       const positions = await getPositions(apiKeyId, secretKey, isPaper);
+      const regimeData = await getSPYRegime(apiKeyId, secretKey);
       
       // Check for pre-market changes on all tickers
       const premarketChanges: Record<string, number> = {};
@@ -727,6 +811,9 @@ serve(async (req) => {
           vixLevel, 
           positions,
           premarketChanges,
+          marketRegime: regimeData.regime,
+          spyPrice: regimeData.spyPrice,
+          spy200SMA: regimeData.sma200,
           currentTimeET: `${timeInfo.hours}:${timeInfo.mins.toString().padStart(2, '0')}`,
           timeInMinutes: timeInfo.minutes
         }),
