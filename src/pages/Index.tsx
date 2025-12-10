@@ -9,6 +9,7 @@ import { AutoTradingCard } from '@/components/AutoTradingCard';
 import { OrdersCard } from '@/components/OrdersCard';
 import { SettingsModal } from '@/components/SettingsModal';
 import { TutorialModal } from '@/components/TutorialModal';
+import { AIAnalyzerCard } from '@/components/AIAnalyzerCard';
 import { useTheme } from '@/hooks/useTheme';
 import { storage } from '@/lib/storage';
 import { AlpacaCredentials } from '@/lib/types';
@@ -110,6 +111,13 @@ const Index = () => {
             onSelectStrategy={handleSelectStrategy}
           />
         </div>
+
+        {/* AI Analysis Row */}
+        <AIAnalyzerCard 
+          prices={mockPrices} 
+          strategies={strategies}
+          selectedStrategy={selectedStrategy}
+        />
 
         {/* Bottom Row - Positions & Orders */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
