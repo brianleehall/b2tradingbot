@@ -270,7 +270,7 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
         {isLoading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            <span className="ml-3 text-muted-foreground">Scanning yesterday's EOD data...</span>
+            <span className="ml-3 text-muted-foreground">Scanning the last 5 trading day's EOD data...</span>
           </div>
         ) : error ? (
           <div className="flex items-center justify-center py-8 text-destructive">
