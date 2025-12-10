@@ -8,3 +8,6 @@ verify_jwt = false
 
 [functions.auto-trade]
 verify_jwt = false
+
+[functions.gap-scanner]
+verify_jwt = false
