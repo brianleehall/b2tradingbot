@@ -56,17 +56,23 @@ const SCAN_UNIVERSE = [
 ];
 
 // Float data in millions (updated with realistic values)
-// Only stocks with float <= 120M qualify
+// Only stocks with float <= 150M qualify
 const STOCK_FLOAT: Record<string, number> = {
+  // Large movers with manageable float
+  'TSLA': 145,   // Tesla - large but within limit
+  'AMD': 140,    // AMD - within limit
   'SMCI': 58,    // Super Micro - small float, high mover
   'ARM': 102,    // ARM Holdings
+  'COIN': 115,   // Coinbase
+  'PLTR': 140,   // Palantir
+  // Crypto-related
   'MARA': 85,    // Marathon Digital
   'RIOT': 95,    // Riot Platforms
   'MSTR': 110,   // MicroStrategy
   'HUT': 45,     // Hut 8 Mining
   'CLSK': 75,    // CleanSpark
   'BITF': 65,    // Bitfarms
-  'COIN': 115,   // Coinbase (relaxed to 115M)
+  // Small / mid cap high movers
   'IONQ': 42,    // IonQ
   'RGTI': 35,    // Rigetti
   'QUBT': 28,    // Quantum Computing
@@ -80,8 +86,12 @@ const STOCK_FLOAT: Record<string, number> = {
   'BLNK': 45,    // Blink Charging
   'SOFI': 98,    // SoFi
   'HOOD': 88,    // Robinhood
-  'RIVN': 115,   // Rivian (relaxed)
-  'LCID': 118,   // Lucid (relaxed)
+  'RIVN': 130,   // Rivian
+  'LCID': 125,   // Lucid
+  // EV / Clean energy
+  'XPEV': 90,    // XPeng
+  'LI': 95,      // Li Auto
+  'NIO': 120,    // NIO
 };
 
 // All stocks in scan universe are NASDAQ or NYSE
@@ -310,7 +320,7 @@ serve(async (req) => {
     }
 
     console.log("=== SCANNING WITH PREVIOUS DAY EOD DATA ===");
-    console.log("Criteria: RVOL ≥ 3.0 | Change ≥ ±4% | AvgVol ≥ 1M | Price ≥ $20 | Float ≤ 120M");
+    console.log("Criteria: RVOL ≥ 2.5 | Change ≥ ±3% | AvgVol ≥ 800K | Price ≥ $15 | Float ≤ 150M");
 
     // Get SPY 200-SMA for market regime
     const spyData = await getSPY200SMA(apiKeyId, secretKey);
@@ -328,8 +338,8 @@ serve(async (req) => {
       const stockFloat = STOCK_FLOAT[symbol];
       const exchange = STOCK_EXCHANGE[symbol] || 'NASDAQ';
       
-      // FILTER 1: Float must be ≤ 120M (skip if no float data = assume too large)
-      if (!stockFloat || stockFloat > 120) {
+      // FILTER 1: Float must be ≤ 150M (skip if no float data = assume too large)
+      if (!stockFloat || stockFloat > 150) {
         continue;
       }
 
@@ -349,17 +359,17 @@ serve(async (req) => {
         ? yesterdayVolume / avgVolume30d 
         : 0;
 
-      // FILTER 2: RVOL ≥ 3.0
-      if (rvol < 3.0) continue;
+      // FILTER 2: RVOL ≥ 2.5
+      if (rvol < 2.5) continue;
 
-      // FILTER 3: Price change ≥ ±4%
-      if (Math.abs(priceChange) < 4.0) continue;
+      // FILTER 3: Price change ≥ ±3%
+      if (Math.abs(priceChange) < 3.0) continue;
 
-      // FILTER 4: 30-day avg volume ≥ 1,000,000
-      if (avgVolume30d < 1000000) continue;
+      // FILTER 4: 30-day avg volume ≥ 800,000
+      if (avgVolume30d < 800000) continue;
 
-      // FILTER 5: Closing price ≥ $20
-      if (yesterdayClose < 20) continue;
+      // FILTER 5: Closing price ≥ $15
+      if (yesterdayClose < 15) continue;
 
       console.log(`✓ ${symbol}: Close=$${yesterdayClose.toFixed(2)}, Change=${priceChange.toFixed(1)}%, RVOL=${rvol.toFixed(1)}x, Float=${stockFloat}M`);
 
