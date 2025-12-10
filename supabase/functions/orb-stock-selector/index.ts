@@ -15,6 +15,7 @@ interface SelectedStock {
   volume: number;
   float?: number;
   exchange: string;
+  isFallback?: boolean;
 }
 
 interface ScanResult {
@@ -32,8 +33,9 @@ const PRIORITY_STOCKS = [
   'SMCI', 'MARA', 'RIOT', 'MSTR', 'HUT', 'COIN', 'IONQ', 'RGTI'
 ];
 
-// Fallback stocks
-const FALLBACK_STOCKS = ['NVDA', 'TSLA', 'AMD', 'META', 'SMCI'];
+// Fallback stocks (in priority order)
+const FALLBACK_STOCKS = ['NVDA', 'TSLA', 'AMD', 'META', 'SMCI', 'AAPL'];
+const MIN_TOTAL_STOCKS = 4;
 
 // Float data in millions
 const STOCK_FLOAT: Record<string, number> = {
@@ -223,13 +225,13 @@ serve(async (req) => {
     qualifiedStocks.sort((a, b) => b.rvol - a.rvol);
     let topStocks = qualifiedStocks.slice(0, 6);
 
-    // Add fallbacks if needed
-    if (topStocks.length < 3) {
-      console.log(`Adding fallbacks (only ${topStocks.length} qualified)`);
+    // Add fallbacks if needed (minimum 4 total)
+    if (topStocks.length < MIN_TOTAL_STOCKS) {
+      console.log(`Adding fallbacks (only ${topStocks.length} qualified, need ${MIN_TOTAL_STOCKS})`);
       const existingSymbols = new Set(topStocks.map(s => s.symbol));
       
       for (const fallback of FALLBACK_STOCKS) {
-        if (topStocks.length >= 3) break;
+        if (topStocks.length >= MIN_TOTAL_STOCKS) break;
         if (existingSymbols.has(fallback)) continue;
         
         await new Promise(r => setTimeout(r, 100));
@@ -257,6 +259,7 @@ serve(async (req) => {
             volume: yesterdayBar.v,
             float: STOCK_FLOAT[fallback],
             exchange: 'NASDAQ',
+            isFallback: true,
           });
           existingSymbols.add(fallback);
         }

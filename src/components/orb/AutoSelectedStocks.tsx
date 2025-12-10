@@ -18,6 +18,7 @@ export interface SelectedStock {
   float?: number;
   exchange: string;
   isChecked: boolean;
+  isFallback?: boolean;
 }
 
 interface AutoSelectedStocksProps {
@@ -95,6 +96,7 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
         // Map priceChange for compatibility (API returns priceChange, not preMarketChange)
         priceChange: stock.priceChange ?? (stock as any).preMarketChange ?? 0,
         isChecked: true, // All checked by default
+        isFallback: stock.isFallback ?? false,
       }));
 
       setStocks(stocksWithChecked);
@@ -312,6 +314,13 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
                     >
                       {stock.exchange}
                     </Badge>
+                    {stock.isFallback && (
+                      <div className="mt-1">
+                        <Badge variant="secondary" className="text-xs bg-amber-500/20 text-amber-500 border-amber-500/30">
+                          Fallback – High-Probability ORB
+                        </Badge>
+                      </div>
+                    )}
                   </div>
 
                   {/* Yesterday's Price Change */}
