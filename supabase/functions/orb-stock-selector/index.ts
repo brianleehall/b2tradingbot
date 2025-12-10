@@ -8,11 +8,12 @@ const corsHeaders = {
 
 interface SelectedStock {
   symbol: string;
-  preMarketChange: number;
-  rvol: number;
-  price: number;
-  avgVolume: number;
-  float?: number;
+  priceChange: number;      // Yesterday's % change
+  rvol: number;             // Yesterday's RVOL (vol / 30d avg)
+  price: number;            // Yesterday's closing price
+  avgVolume: number;        // 30-day avg volume
+  volume: number;           // Yesterday's volume
+  float?: number;           // Float in millions
   exchange: string;
 }
 
@@ -23,52 +24,151 @@ interface ScanResult {
   marketRegime: 'bullish' | 'bearish';
   spyPrice?: number;
   spy200SMA?: number;
+  scanDate?: string;        // The previous trading day used for scanning
 }
 
-// High-volume stocks to scan (NASDAQ/NYSE only, commonly traded)
+// Expanded universe of liquid NASDAQ/NYSE stocks
 const SCAN_UNIVERSE = [
-  'NVDA', 'TSLA', 'AMD', 'AAPL', 'MSFT', 'META', 'GOOGL', 'AMZN',
-  'SPY', 'QQQ', 'COIN', 'PLTR', 'SOFI', 'RIVN', 'LCID', 'NIO',
-  'MRNA', 'BABA', 'JD', 'PYPL', 'SQ', 'SNOW', 'CRWD', 'PANW',
-  'SMCI', 'ARM', 'MARA', 'RIOT', 'HOOD', 'RBLX', 'SNAP', 'UBER',
-  'ABNB', 'DKNG', 'ENPH', 'FSLR', 'LI', 'XPEV', 'SHOP', 'MU',
-  'INTC', 'NFLX', 'DIS', 'BA', 'F', 'GM', 'AAL', 'DAL', 'UAL',
-  'CCL', 'NCLH', 'RCL', 'WYNN', 'MGM', 'LVS', 'CHWY', 'ROKU',
-  'ZM', 'DOCU', 'PTON', 'W', 'ETSY', 'PINS', 'TTD', 'OKTA'
+  // Mega caps
+  'NVDA', 'TSLA', 'AMD', 'AAPL', 'MSFT', 'META', 'GOOGL', 'AMZN', 'NFLX',
+  // High beta / meme stocks
+  'COIN', 'PLTR', 'SOFI', 'RIVN', 'LCID', 'NIO', 'HOOD', 'RBLX', 'SNAP',
+  // Crypto-related
+  'MARA', 'RIOT', 'MSTR', 'BITF', 'HUT', 'CLSK',
+  // AI / Semiconductors
+  'SMCI', 'ARM', 'MU', 'INTC', 'AVGO', 'QCOM', 'TSM', 'AMAT', 'LRCX', 'KLAC',
+  // Growth tech
+  'CRWD', 'PANW', 'SNOW', 'DDOG', 'NET', 'ZS', 'OKTA', 'MDB', 'ESTC',
+  // EV / Clean energy
+  'XPEV', 'LI', 'ENPH', 'FSLR', 'PLUG', 'CHPT', 'BLNK',
+  // E-commerce / Consumer
+  'SHOP', 'UBER', 'ABNB', 'DKNG', 'CHWY', 'ROKU', 'ZM', 'DOCU', 'PTON', 'W', 'ETSY', 'PINS',
+  // Travel / Leisure
+  'CCL', 'NCLH', 'RCL', 'WYNN', 'MGM', 'LVS', 'AAL', 'DAL', 'UAL',
+  // Financials
+  'SQ', 'PYPL', 'AFRM', 'UPST',
+  // Biotech / Pharma (volatile)
+  'MRNA', 'BNTX', 'NVAX',
+  // Other high-volume
+  'SPY', 'QQQ', 'IWM', 'DIS', 'BA', 'F', 'GM', 'BABA', 'JD', 'TTD',
+  // Small cap movers
+  'IONQ', 'RGTI', 'QUBT', 'SOUN', 'GSAT', 'DNA'
 ];
 
-// Stock metadata (float in millions, exchange)
-const STOCK_METADATA: Record<string, { float: number; exchange: string }> = {
-  'NVDA': { float: 2450, exchange: 'NASDAQ' },
-  'TSLA': { float: 2850, exchange: 'NASDAQ' },
-  'AMD': { float: 1620, exchange: 'NASDAQ' },
-  'AAPL': { float: 15400, exchange: 'NASDAQ' },
-  'MSFT': { float: 7440, exchange: 'NASDAQ' },
-  'META': { float: 2280, exchange: 'NASDAQ' },
-  'GOOGL': { float: 5800, exchange: 'NASDAQ' },
-  'AMZN': { float: 10300, exchange: 'NASDAQ' },
-  'SPY': { float: 920, exchange: 'NYSE' },
-  'QQQ': { float: 490, exchange: 'NASDAQ' },
-  'COIN': { float: 170, exchange: 'NASDAQ' },
-  'PLTR': { float: 2100, exchange: 'NYSE' },
-  'SOFI': { float: 950, exchange: 'NASDAQ' },
-  'RIVN': { float: 850, exchange: 'NASDAQ' },
-  'LCID': { float: 1800, exchange: 'NASDAQ' },
-  'NIO': { float: 1650, exchange: 'NYSE' },
-  'SMCI': { float: 52, exchange: 'NASDAQ' },
-  'ARM': { float: 102, exchange: 'NASDAQ' },
-  'MARA': { float: 280, exchange: 'NASDAQ' },
-  'RIOT': { float: 250, exchange: 'NASDAQ' },
-  'HOOD': { float: 780, exchange: 'NASDAQ' },
-  'RBLX': { float: 590, exchange: 'NYSE' },
-  'SNAP': { float: 1450, exchange: 'NYSE' },
-  'UBER': { float: 1980, exchange: 'NYSE' },
-  'ABNB': { float: 610, exchange: 'NASDAQ' },
-  'DKNG': { float: 450, exchange: 'NASDAQ' },
-  'MU': { float: 1100, exchange: 'NASDAQ' },
-  'INTC': { float: 4200, exchange: 'NASDAQ' },
-  'NFLX': { float: 430, exchange: 'NASDAQ' },
+// Float data in millions (updated with realistic values)
+// Only stocks with float <= 120M qualify
+const STOCK_FLOAT: Record<string, number> = {
+  'SMCI': 58,    // Super Micro - small float, high mover
+  'ARM': 102,    // ARM Holdings
+  'MARA': 85,    // Marathon Digital
+  'RIOT': 95,    // Riot Platforms
+  'MSTR': 110,   // MicroStrategy
+  'HUT': 45,     // Hut 8 Mining
+  'CLSK': 75,    // CleanSpark
+  'BITF': 65,    // Bitfarms
+  'COIN': 115,   // Coinbase (relaxed to 115M)
+  'IONQ': 42,    // IonQ
+  'RGTI': 35,    // Rigetti
+  'QUBT': 28,    // Quantum Computing
+  'SOUN': 55,    // SoundHound
+  'GSAT': 80,    // Globalstar
+  'DNA': 90,     // Ginkgo Bioworks
+  'AFRM': 95,    // Affirm
+  'UPST': 78,    // Upstart
+  'PLUG': 110,   // Plug Power
+  'CHPT': 105,   // ChargePoint
+  'BLNK': 45,    // Blink Charging
+  'SOFI': 98,    // SoFi
+  'HOOD': 88,    // Robinhood
+  'RIVN': 115,   // Rivian (relaxed)
+  'LCID': 118,   // Lucid (relaxed)
 };
+
+// All stocks in scan universe are NASDAQ or NYSE
+const STOCK_EXCHANGE: Record<string, string> = {
+  'NVDA': 'NASDAQ', 'TSLA': 'NASDAQ', 'AMD': 'NASDAQ', 'AAPL': 'NASDAQ', 'MSFT': 'NASDAQ',
+  'META': 'NASDAQ', 'GOOGL': 'NASDAQ', 'AMZN': 'NASDAQ', 'NFLX': 'NASDAQ',
+  'COIN': 'NASDAQ', 'PLTR': 'NYSE', 'SOFI': 'NASDAQ', 'RIVN': 'NASDAQ', 'LCID': 'NASDAQ',
+  'NIO': 'NYSE', 'HOOD': 'NASDAQ', 'RBLX': 'NYSE', 'SNAP': 'NYSE',
+  'MARA': 'NASDAQ', 'RIOT': 'NASDAQ', 'MSTR': 'NASDAQ', 'BITF': 'NASDAQ', 'HUT': 'NASDAQ', 'CLSK': 'NASDAQ',
+  'SMCI': 'NASDAQ', 'ARM': 'NASDAQ', 'MU': 'NASDAQ', 'INTC': 'NASDAQ', 'AVGO': 'NASDAQ',
+  'QCOM': 'NASDAQ', 'TSM': 'NYSE', 'AMAT': 'NASDAQ', 'LRCX': 'NASDAQ', 'KLAC': 'NASDAQ',
+  'CRWD': 'NASDAQ', 'PANW': 'NASDAQ', 'SNOW': 'NYSE', 'DDOG': 'NASDAQ', 'NET': 'NYSE',
+  'ZS': 'NASDAQ', 'OKTA': 'NASDAQ', 'MDB': 'NASDAQ', 'ESTC': 'NYSE',
+  'XPEV': 'NYSE', 'LI': 'NASDAQ', 'ENPH': 'NASDAQ', 'FSLR': 'NASDAQ', 'PLUG': 'NASDAQ', 'CHPT': 'NYSE', 'BLNK': 'NASDAQ',
+  'SHOP': 'NYSE', 'UBER': 'NYSE', 'ABNB': 'NASDAQ', 'DKNG': 'NASDAQ', 'CHWY': 'NYSE',
+  'ROKU': 'NASDAQ', 'ZM': 'NASDAQ', 'DOCU': 'NASDAQ', 'PTON': 'NASDAQ', 'W': 'NYSE', 'ETSY': 'NASDAQ', 'PINS': 'NYSE',
+  'CCL': 'NYSE', 'NCLH': 'NYSE', 'RCL': 'NYSE', 'WYNN': 'NASDAQ', 'MGM': 'NYSE', 'LVS': 'NYSE',
+  'AAL': 'NASDAQ', 'DAL': 'NYSE', 'UAL': 'NASDAQ',
+  'SQ': 'NYSE', 'PYPL': 'NASDAQ', 'AFRM': 'NASDAQ', 'UPST': 'NASDAQ',
+  'MRNA': 'NASDAQ', 'BNTX': 'NASDAQ', 'NVAX': 'NASDAQ',
+  'SPY': 'NYSE', 'QQQ': 'NASDAQ', 'IWM': 'NYSE', 'DIS': 'NYSE', 'BA': 'NYSE', 'F': 'NYSE', 'GM': 'NYSE',
+  'BABA': 'NYSE', 'JD': 'NASDAQ', 'TTD': 'NASDAQ',
+  'IONQ': 'NYSE', 'RGTI': 'NASDAQ', 'QUBT': 'NASDAQ', 'SOUN': 'NASDAQ', 'GSAT': 'NYSE', 'DNA': 'NYSE',
+};
+
+// Get previous trading day's data for a stock
+async function getEODData(
+  symbol: string,
+  apiKeyId: string,
+  secretKey: string
+): Promise<{
+  yesterdayClose: number;
+  dayBeforeClose: number;
+  yesterdayVolume: number;
+  avgVolume30d: number;
+  tradingDate: string;
+} | null> {
+  try {
+    const baseUrl = 'https://data.alpaca.markets/v2';
+    
+    // Get last 35 days of daily bars (enough to calculate 30-day avg + yesterday)
+    const now = new Date();
+    const startDate = new Date(now);
+    startDate.setDate(startDate.getDate() - 50);
+
+    const barsRes = await fetch(
+      `${baseUrl}/stocks/${symbol}/bars?timeframe=1Day&start=${startDate.toISOString().split('T')[0]}&limit=35`,
+      {
+        headers: {
+          'APCA-API-KEY-ID': apiKeyId,
+          'APCA-API-SECRET-KEY': secretKey,
+        },
+      }
+    );
+
+    if (!barsRes.ok) {
+      return null;
+    }
+
+    const barsData = await barsRes.json();
+    const bars = barsData.bars || [];
+
+    // Need at least 2 days to calculate change
+    if (bars.length < 2) return null;
+
+    // Yesterday = most recent bar, Day before = second most recent
+    const yesterdayBar = bars[bars.length - 1];
+    const dayBeforeBar = bars[bars.length - 2];
+    
+    // 30-day average volume (excluding yesterday)
+    const volumeBars = bars.slice(0, -1).slice(-30);
+    const avgVolume30d = volumeBars.length > 0 
+      ? volumeBars.reduce((sum: number, b: any) => sum + b.v, 0) / volumeBars.length
+      : 0;
+
+    return {
+      yesterdayClose: yesterdayBar.c,
+      dayBeforeClose: dayBeforeBar.c,
+      yesterdayVolume: yesterdayBar.v,
+      avgVolume30d,
+      tradingDate: yesterdayBar.t.split('T')[0],
+    };
+  } catch (error) {
+    console.error(`Error fetching EOD data for ${symbol}:`, error);
+    return null;
+  }
+}
 
 // Get SPY 200-day SMA for market regime detection
 async function getSPY200SMA(
@@ -89,18 +189,15 @@ async function getSPY200SMA(
       }
     );
 
-    if (!quoteRes.ok) {
-      console.log('SPY quote failed:', await quoteRes.text());
-      return null;
-    }
+    if (!quoteRes.ok) return null;
 
     const quoteData = await quoteRes.json();
     const currentPrice = quoteData.quote?.ap || quoteData.quote?.bp || 0;
 
-    // Get 200 days of daily bars for SMA calculation
+    // Get 200+ days of daily bars for SMA calculation
     const now = new Date();
     const startDate = new Date(now);
-    startDate.setDate(startDate.getDate() - 300); // Extra days for weekends/holidays
+    startDate.setDate(startDate.getDate() - 300);
 
     const barsRes = await fetch(
       `${baseUrl}/stocks/SPY/bars?timeframe=1Day&start=${startDate.toISOString().split('T')[0]}&limit=200`,
@@ -112,21 +209,13 @@ async function getSPY200SMA(
       }
     );
 
-    if (!barsRes.ok) {
-      console.log('SPY bars failed');
-      return null;
-    }
+    if (!barsRes.ok) return null;
 
     const barsData = await barsRes.json();
     const bars = barsData.bars || [];
 
-    if (bars.length < 200) {
-      console.log(`Only got ${bars.length} bars for SPY, need 200 for SMA`);
-      // Use what we have if close to 200
-      if (bars.length < 150) return null;
-    }
+    if (bars.length < 150) return null;
 
-    // Calculate 200-day SMA using closing prices
     const closes = bars.slice(-200).map((b: any) => b.c);
     const sma200 = closes.reduce((sum: number, c: number) => sum + c, 0) / closes.length;
 
@@ -139,106 +228,12 @@ async function getSPY200SMA(
   }
 }
 
-async function getPreMarketData(
-  symbol: string,
-  apiKeyId: string,
-  secretKey: string
-): Promise<{
-  currentPrice: number;
-  previousClose: number;
-  preMarketVolume: number;
-  avgVolume: number;
-} | null> {
-  try {
-    const baseUrl = 'https://data.alpaca.markets/v2';
-    
-    // Get latest quote
-    const quoteRes = await fetch(
-      `${baseUrl}/stocks/${symbol}/quotes/latest`,
-      {
-        headers: {
-          'APCA-API-KEY-ID': apiKeyId,
-          'APCA-API-SECRET-KEY': secretKey,
-        },
-      }
-    );
-
-    if (!quoteRes.ok) {
-      console.log(`Quote failed for ${symbol}:`, await quoteRes.text());
-      return null;
-    }
-
-    const quoteData = await quoteRes.json();
-    const currentPrice = quoteData.quote?.ap || quoteData.quote?.bp || 0;
-
-    // Get previous day's bar for close and avg volume calculation
-    const now = new Date();
-    const thirtyDaysAgo = new Date(now);
-    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 45);
-
-    const barsRes = await fetch(
-      `${baseUrl}/stocks/${symbol}/bars?timeframe=1Day&start=${thirtyDaysAgo.toISOString().split('T')[0]}&limit=31`,
-      {
-        headers: {
-          'APCA-API-KEY-ID': apiKeyId,
-          'APCA-API-SECRET-KEY': secretKey,
-        },
-      }
-    );
-
-    if (!barsRes.ok) {
-      console.log(`Bars failed for ${symbol}`);
-      return null;
-    }
-
-    const barsData = await barsRes.json();
-    const bars = barsData.bars || [];
-
-    if (bars.length < 2) return null;
-
-    const previousClose = bars[bars.length - 1]?.c || 0;
-    const avgVolume = bars.slice(0, -1).reduce((sum: number, b: any) => sum + b.v, 0) / Math.max(1, bars.length - 1);
-
-    // Get today's pre-market volume
-    const today = new Date().toISOString().split('T')[0];
-    const preMarketRes = await fetch(
-      `${baseUrl}/stocks/${symbol}/bars?timeframe=1Min&start=${today}T04:00:00-05:00&end=${today}T09:30:00-05:00&limit=500`,
-      {
-        headers: {
-          'APCA-API-KEY-ID': apiKeyId,
-          'APCA-API-SECRET-KEY': secretKey,
-        },
-      }
-    );
-
-    let preMarketVolume = 0;
-    if (preMarketRes.ok) {
-      const preMarketData = await preMarketRes.json();
-      const preMarketBars = preMarketData.bars || [];
-      preMarketVolume = preMarketBars.reduce((sum: number, b: any) => sum + b.v, 0);
-    }
-
-    return {
-      currentPrice: currentPrice || previousClose,
-      previousClose,
-      preMarketVolume,
-      avgVolume,
-    };
-  } catch (error) {
-    console.error(`Error fetching data for ${symbol}:`, error);
-    return null;
-  }
-}
-
 serve(async (req) => {
-  // v2 - Token-based auth fix
-  console.log("ORB Stock Selector v2 triggered at:", new Date().toISOString());
+  console.log("ORB Stock Selector v3 (EOD-based) triggered at:", new Date().toISOString());
   
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
-
-  console.log("ORB Stock Selector triggered at:", new Date().toISOString());
 
   try {
     const authHeader = req.headers.get('Authorization');
@@ -253,12 +248,11 @@ serve(async (req) => {
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    // Extract and decode JWT token manually (SDK getUser has session issues)
+    // Extract user ID from JWT
     const token = authHeader.replace('Bearer ', '');
     let userId: string;
     
     try {
-      // Decode JWT payload (base64url encoded)
       const parts = token.split('.');
       if (parts.length !== 3) throw new Error('Invalid JWT format');
       
@@ -266,11 +260,7 @@ serve(async (req) => {
       userId = payload.sub;
       
       if (!userId) throw new Error('No user ID in token');
-      
-      // Verify token hasn't expired
-      if (payload.exp && payload.exp * 1000 < Date.now()) {
-        throw new Error('Token expired');
-      }
+      if (payload.exp && payload.exp * 1000 < Date.now()) throw new Error('Token expired');
       
       console.log("User authenticated:", userId);
     } catch (e) {
@@ -280,32 +270,29 @@ serve(async (req) => {
         { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
-    
-    const user = { id: userId };
 
     // Get user's trading config for API keys
     const { data: configs, error: configError } = await supabase
-      .rpc('get_decrypted_trading_config', { p_user_id: user.id });
+      .rpc('get_decrypted_trading_config', { p_user_id: userId });
 
     if (configError || !configs?.length) {
-      console.log("No trading config found, returning mock data");
-      // Return mock data if no config
-      const mockStocks: SelectedStock[] = [
-        { symbol: 'SMCI', preMarketChange: 8.5, rvol: 4.2, price: 45.20, avgVolume: 12000000, float: 52, exchange: 'NASDAQ' },
-        { symbol: 'MARA', preMarketChange: 6.3, rvol: 3.8, price: 24.50, avgVolume: 18000000, float: 280, exchange: 'NASDAQ' },
-        { symbol: 'RIOT', preMarketChange: 5.8, rvol: 3.5, price: 12.80, avgVolume: 22000000, float: 250, exchange: 'NASDAQ' },
-        { symbol: 'ARM', preMarketChange: 4.2, rvol: 3.2, price: 142.00, avgVolume: 8500000, float: 102, exchange: 'NASDAQ' },
-        { symbol: 'COIN', preMarketChange: 3.5, rvol: 3.1, price: 285.00, avgVolume: 6200000, float: 170, exchange: 'NASDAQ' },
+      console.log("No trading config found, returning demo data");
+      const demoStocks: SelectedStock[] = [
+        { symbol: 'SMCI', priceChange: 8.5, rvol: 4.2, price: 45.20, avgVolume: 12000000, volume: 50400000, float: 58, exchange: 'NASDAQ' },
+        { symbol: 'MARA', priceChange: 6.3, rvol: 3.8, price: 24.50, avgVolume: 18000000, volume: 68400000, float: 85, exchange: 'NASDAQ' },
+        { symbol: 'ARM', priceChange: -5.2, rvol: 3.5, price: 142.00, avgVolume: 8500000, volume: 29750000, float: 102, exchange: 'NASDAQ' },
+        { symbol: 'RIOT', priceChange: 4.8, rvol: 3.3, price: 12.80, avgVolume: 22000000, volume: 72600000, float: 95, exchange: 'NASDAQ' },
       ];
 
       return new Response(
         JSON.stringify({
-          stocks: mockStocks,
+          stocks: demoStocks,
           scannedAt: new Date().toISOString(),
-          message: 'Using demo data - connect Alpaca for live scanning',
+          message: 'Using demo data - connect Alpaca for live EOD scanning',
           marketRegime: 'bullish' as const,
           spyPrice: 580.00,
           spy200SMA: 550.00,
+          scanDate: 'demo',
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
@@ -316,78 +303,88 @@ serve(async (req) => {
     const secretKey = config.secret_key;
 
     if (!apiKeyId || !secretKey) {
-      console.log("API keys not properly decrypted");
       return new Response(
         JSON.stringify({ error: 'API keys not configured properly' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
 
-    console.log("Scanning stocks with live data...");
+    console.log("=== SCANNING WITH PREVIOUS DAY EOD DATA ===");
+    console.log("Criteria: RVOL ≥ 3.0 | Change ≥ ±4% | AvgVol ≥ 1M | Price ≥ $20 | Float ≤ 120M");
 
-    // First, get SPY 200-day SMA for market regime detection
+    // Get SPY 200-SMA for market regime
     const spyData = await getSPY200SMA(apiKeyId, secretKey);
     const marketRegime: 'bullish' | 'bearish' = spyData && spyData.currentPrice < spyData.sma200 
       ? 'bearish' 
       : 'bullish';
     
-    console.log(`Market regime: ${marketRegime} (SPY: $${spyData?.currentPrice?.toFixed(2) || 'N/A'}, 200-SMA: $${spyData?.sma200?.toFixed(2) || 'N/A'})`);
+    console.log(`Market regime: ${marketRegime}`);
 
-    // Scan all stocks in universe
-
-    // Collect all stock data first
-    const allStockData: SelectedStock[] = [];
+    // Scan all stocks using previous day's EOD data
+    const qualifiedStocks: SelectedStock[] = [];
+    let scanDate = '';
 
     for (const symbol of SCAN_UNIVERSE) {
-      const metadata = STOCK_METADATA[symbol];
+      const stockFloat = STOCK_FLOAT[symbol];
+      const exchange = STOCK_EXCHANGE[symbol] || 'NASDAQ';
       
-      // Skip if no metadata
-      if (!metadata) {
-        console.log(`${symbol}: No metadata, skipping`);
+      // FILTER 1: Float must be ≤ 120M (skip if no float data = assume too large)
+      if (!stockFloat || stockFloat > 120) {
         continue;
       }
 
-      const data = await getPreMarketData(symbol, apiKeyId, secretKey);
-      if (!data) {
-        console.log(`${symbol}: No data from API, skipping`);
-        continue;
-      }
+      const eodData = await getEODData(symbol, apiKeyId, secretKey);
+      if (!eodData) continue;
 
-      const { currentPrice, previousClose, preMarketVolume, avgVolume } = data;
+      const { yesterdayClose, dayBeforeClose, yesterdayVolume, avgVolume30d, tradingDate } = eodData;
+      
+      if (!scanDate) scanDate = tradingDate;
 
-      // Calculate metrics
-      const dailyChange = previousClose > 0 
-        ? ((currentPrice - previousClose) / previousClose) * 100 
+      // Calculate yesterday's metrics
+      const priceChange = dayBeforeClose > 0 
+        ? ((yesterdayClose - dayBeforeClose) / dayBeforeClose) * 100 
         : 0;
       
-      // RVOL calculation
-      const expectedPreMarketVolume = avgVolume * 0.15;
-      const rvol = expectedPreMarketVolume > 0 ? preMarketVolume / expectedPreMarketVolume : 1;
+      const rvol = avgVolume30d > 0 
+        ? yesterdayVolume / avgVolume30d 
+        : 0;
 
-      console.log(`${symbol}: price=$${currentPrice?.toFixed(2)}, change=${dailyChange.toFixed(2)}%, rvol=${rvol.toFixed(2)}, avgVol=${avgVolume}`);
+      // FILTER 2: RVOL ≥ 3.0
+      if (rvol < 3.0) continue;
 
-      // Add all stocks with valid data
-      if (currentPrice > 0 && avgVolume > 0) {
-        allStockData.push({
-          symbol,
-          preMarketChange: Math.round(dailyChange * 100) / 100,
-          rvol: Math.round(Math.max(rvol, 1) * 100) / 100, // Minimum RVOL of 1
-          price: Math.round(currentPrice * 100) / 100,
-          avgVolume: Math.round(avgVolume),
-          float: metadata.float,
-          exchange: metadata.exchange,
-        });
-      }
+      // FILTER 3: Price change ≥ ±4%
+      if (Math.abs(priceChange) < 4.0) continue;
+
+      // FILTER 4: 30-day avg volume ≥ 1,000,000
+      if (avgVolume30d < 1000000) continue;
+
+      // FILTER 5: Closing price ≥ $20
+      if (yesterdayClose < 20) continue;
+
+      console.log(`✓ ${symbol}: Close=$${yesterdayClose.toFixed(2)}, Change=${priceChange.toFixed(1)}%, RVOL=${rvol.toFixed(1)}x, Float=${stockFloat}M`);
+
+      qualifiedStocks.push({
+        symbol,
+        priceChange: Math.round(priceChange * 100) / 100,
+        rvol: Math.round(rvol * 100) / 100,
+        price: Math.round(yesterdayClose * 100) / 100,
+        avgVolume: Math.round(avgVolume30d),
+        volume: yesterdayVolume,
+        float: stockFloat,
+        exchange,
+      });
 
       // Small delay to avoid rate limiting
-      await new Promise(resolve => setTimeout(resolve, 100));
+      await new Promise(resolve => setTimeout(resolve, 80));
     }
 
-    // Sort by absolute daily change (most volatile first) and take top 6
-    allStockData.sort((a, b) => Math.abs(b.preMarketChange) - Math.abs(a.preMarketChange));
-    const topStocks = allStockData.slice(0, 6);
-    
-    console.log(`Found ${allStockData.length} stocks with data, returning top ${topStocks.length}`);
+    // Sort by RVOL (highest first) and take top 6
+    qualifiedStocks.sort((a, b) => b.rvol - a.rvol);
+    const topStocks = qualifiedStocks.slice(0, 6);
+
+    console.log(`=== SCAN COMPLETE ===`);
+    console.log(`Found ${qualifiedStocks.length} stocks meeting ALL criteria`);
+    console.log(`Returning top ${topStocks.length}: ${topStocks.map(s => s.symbol).join(', ')}`);
 
     const result: ScanResult = {
       stocks: topStocks,
@@ -395,10 +392,11 @@ serve(async (req) => {
       marketRegime,
       spyPrice: spyData?.currentPrice,
       spy200SMA: spyData?.sma200,
+      scanDate,
     };
 
     if (topStocks.length === 0) {
-      result.message = "Waiting for better setups today – no trades yet";
+      result.message = "No stocks met all criteria yesterday – waiting for better setups";
     }
 
     return new Response(
