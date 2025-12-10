@@ -441,11 +441,9 @@ serve(async (req) => {
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Fetch all users with auto-trading enabled
+    // Fetch all users with auto-trading enabled using the secure decryption function
     const { data: configs, error: configError } = await supabase
-      .from('trading_configurations')
-      .select('*')
-      .eq('auto_trading_enabled', true);
+      .rpc('get_active_trading_configs');
 
     if (configError) {
       console.error("Error fetching configs:", configError);

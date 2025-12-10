@@ -49,11 +49,8 @@ const Index = () => {
     isPaperTrading: config.isPaperTrading,
   } : null;
 
-  useEffect(() => {
-    if (credentials) {
-      storage.setCredentials(credentials);
-    }
-  }, [credentials]);
+  // Credentials are now stored in the database, not localStorage
+  // This effect is no longer needed
 
   const { account, positions, orders, isLoading: dataLoading, error, refetch } = useAlpacaData(isConnected);
 
@@ -101,7 +98,7 @@ const Index = () => {
   const handleConnect = async (creds: AlpacaCredentials) => {
     const success = await saveCredentials(creds);
     if (success) {
-      storage.setCredentials(creds);
+      // Credentials are now stored in the database
       refetch();
     }
   };
@@ -113,7 +110,7 @@ const Index = () => {
 
   const handleSelectStrategy = async (strategyId: string) => {
     await updateStrategy(strategyId);
-    storage.setSelectedStrategy(strategyId);
+    // Strategy is now stored in the database
   };
 
   const handleToggleAutoTrading = async (enabled: boolean) => {

@@ -1,4 +1,5 @@
 import { serve } from "https://deno.land/std@0.168.0/http/server.ts";
+import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -40,11 +41,77 @@ serve(async (req) => {
   }
 
   try {
-    const { apiKeyId, secretKey, isPaperTrading, endpoint } = await req.json();
+    // Get the authorization header to extract the user
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader) {
+      return new Response(
+        JSON.stringify({ error: 'Missing authorization header' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Create Supabase client with the user's JWT
+    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+    const supabaseAnonKey = Deno.env.get('SUPABASE_ANON_KEY')!;
+    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    
+    // Use the user's JWT to get their identity
+    const supabaseUser = createClient(supabaseUrl, supabaseAnonKey, {
+      global: { headers: { Authorization: authHeader } }
+    });
+
+    // Get the authenticated user
+    const { data: { user }, error: userError } = await supabaseUser.auth.getUser();
+    
+    if (userError || !user) {
+      console.error('Auth error:', userError);
+      return new Response(
+        JSON.stringify({ error: 'Unauthorized - invalid token' }),
+        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    console.log(`Authenticated user: ${user.id}`);
+
+    // Parse request body for endpoint
+    const { endpoint } = await req.json();
+    
+    if (!endpoint) {
+      return new Response(
+        JSON.stringify({ error: 'Missing endpoint parameter' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    // Use service role to get decrypted credentials via the secure function
+    const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey);
+    
+    const { data: configData, error: configError } = await supabaseAdmin
+      .rpc('get_decrypted_trading_config', { p_user_id: user.id });
+
+    if (configError) {
+      console.error('Config fetch error:', configError);
+      return new Response(
+        JSON.stringify({ error: 'Failed to fetch trading configuration' }),
+        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    if (!configData || configData.length === 0) {
+      return new Response(
+        JSON.stringify({ error: 'No trading configuration found. Please set up your API keys.' }),
+        { status: 404, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+      );
+    }
+
+    const config = configData[0];
+    const apiKeyId = config.api_key_id;
+    const secretKey = config.secret_key;
+    const isPaperTrading = config.is_paper_trading;
 
     if (!apiKeyId || !secretKey) {
       return new Response(
-        JSON.stringify({ error: 'Missing API credentials' }),
+        JSON.stringify({ error: 'Missing API credentials in configuration' }),
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );
     }
