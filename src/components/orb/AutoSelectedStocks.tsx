@@ -35,6 +35,29 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
   const [spyPrice, setSpyPrice] = useState<number | null>(null);
   const [spy200SMA, setSpy200SMA] = useState<number | null>(null);
 
+  const saveSelectedTickers = useCallback(async (symbols: string[]) => {
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) return;
+
+      // Upsert the user's selected tickers
+      const { error } = await supabase
+        .from('user_orb_tickers')
+        .upsert(
+          { user_id: session.user.id, symbols },
+          { onConflict: 'user_id' }
+        );
+
+      if (error) {
+        console.error('Failed to save tickers:', error);
+      } else {
+        console.log('Saved selected tickers:', symbols);
+      }
+    } catch (err) {
+      console.error('Error saving tickers:', err);
+    }
+  }, []);
+
   const fetchStocks = useCallback(async () => {
     setIsLoading(true);
     setError(null);
@@ -87,6 +110,9 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
         .filter((s: SelectedStock) => s.isChecked)
         .map((s: SelectedStock) => s.symbol);
       onStocksChange(checkedSymbols);
+      
+      // Save initial selection to database
+      saveSelectedTickers(checkedSymbols);
 
     } catch (err) {
       console.error('Failed to fetch stocks:', err);
@@ -94,7 +120,7 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
     } finally {
       setIsLoading(false);
     }
-  }, [onStocksChange]);
+  }, [onStocksChange, saveSelectedTickers]);
 
   // Initial fetch on mount
   useEffect(() => {
@@ -122,7 +148,7 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
     return () => clearInterval(interval);
   }, [fetchStocks]);
 
-  const toggleStock = (symbol: string) => {
+  const toggleStock = async (symbol: string) => {
     if (disabled) return;
 
     setStocks(prev => {
@@ -135,6 +161,9 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
         .filter(s => s.isChecked)
         .map(s => s.symbol);
       onStocksChange(checkedSymbols);
+      
+      // Save to database
+      saveSelectedTickers(checkedSymbols);
       
       return updated;
     });
