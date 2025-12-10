@@ -126,11 +126,17 @@ async function getORBRange(
   }
 }
 
-// Get SPY 200-day SMA and current price for market regime detection
-async function getSPYRegime(apiKeyId: string, secretKey: string): Promise<{ 
+// Get combined market regime based on SPY 200-SMA AND VIX
+// Decision table:
+// - SPY > 200-SMA AND VIX ≤ 25 → 'bull' (both long/short allowed)
+// - SPY > 200-SMA AND VIX > 25 → 'elevated_vol' (shorts only)
+// - SPY < 200-SMA → 'bear' (shorts only)
+async function getCombinedRegime(apiKeyId: string, secretKey: string): Promise<{ 
   spyPrice: number; 
-  sma200: number; 
-  regime: 'bullish' | 'bearish' 
+  sma200: number;
+  vixLevel: number;
+  regime: 'bull' | 'elevated_vol' | 'bear';
+  longsAllowed: boolean;
 }> {
   try {
     const polygonKey = Deno.env.get('POLYGON_API_KEY');
@@ -155,10 +161,9 @@ async function getSPYRegime(apiKeyId: string, secretKey: string): Promise<{
     // Get 200-day SMA from Polygon
     let sma200 = 0;
     if (polygonKey) {
-      // Get last 200 trading days of SPY data
       const endDate = new Date();
       const startDate = new Date();
-      startDate.setDate(startDate.getDate() - 300); // Buffer for non-trading days
+      startDate.setDate(startDate.getDate() - 300);
       
       const startStr = startDate.toISOString().split('T')[0];
       const endStr = endDate.toISOString().split('T')[0];
@@ -172,28 +177,43 @@ async function getSPYRegime(apiKeyId: string, secretKey: string): Promise<{
         const bars = smaData.results || [];
         
         if (bars.length >= 200) {
-          // Calculate 200-day SMA from closing prices
           const sum = bars.slice(0, 200).reduce((acc: number, bar: any) => acc + bar.c, 0);
           sma200 = sum / 200;
-          console.log(`SPY: $${spyPrice.toFixed(2)}, 200-SMA: $${sma200.toFixed(2)}`);
         } else {
-          console.log(`Only got ${bars.length} bars for SPY SMA calculation`);
-          // Fallback: use 200 if we can't calculate
           sma200 = spyPrice * 0.95; // Assume bullish if we can't calculate
         }
       }
     } else {
-      console.log('No POLYGON_API_KEY - defaulting to bullish regime');
       sma200 = spyPrice * 0.95; // Default to bullish if no API key
     }
     
-    const regime = spyPrice > sma200 ? 'bullish' : 'bearish';
-    console.log(`Market Regime: ${regime.toUpperCase()} (SPY ${spyPrice > sma200 ? 'above' : 'below'} 200-SMA)`);
+    // Get VIX level
+    const vixLevel = await getVIXLevel(apiKeyId, secretKey);
     
-    return { spyPrice, sma200, regime };
+    // Combined regime decision table
+    const spyAboveSMA = spyPrice > sma200;
+    const vixLow = vixLevel <= CONFIG.VIX_SHORTS_ONLY_THRESHOLD;
+    
+    let regime: 'bull' | 'elevated_vol' | 'bear';
+    let longsAllowed: boolean;
+    
+    if (spyAboveSMA && vixLow) {
+      regime = 'bull';
+      longsAllowed = true;
+    } else if (spyAboveSMA && !vixLow) {
+      regime = 'elevated_vol';
+      longsAllowed = false;
+    } else {
+      regime = 'bear';
+      longsAllowed = false;
+    }
+    
+    console.log(`[REGIME] SPY: $${spyPrice.toFixed(2)} (200-SMA: $${sma200.toFixed(2)}), VIX: ${vixLevel.toFixed(1)} → ${regime.toUpperCase()} (Longs: ${longsAllowed ? 'YES' : 'NO'})`);
+    
+    return { spyPrice, sma200, vixLevel, regime, longsAllowed };
   } catch (error) {
-    console.error('Error fetching SPY regime:', error);
-    return { spyPrice: 0, sma200: 0, regime: 'bullish' }; // Default to bullish on error
+    console.error('Error fetching combined regime:', error);
+    return { spyPrice: 0, sma200: 0, vixLevel: 20, regime: 'bull', longsAllowed: true };
   }
 }
 
@@ -510,10 +530,10 @@ function checkORBSignal(
   currentPrice: number,
   volume: number,
   avgVolume: number,
-  vixLevel: number,
   premarketChange: number,
   intradayMetrics: { vwap20: number; volumeRatio: number } | null,
-  marketRegime: string
+  longsAllowed: boolean,
+  regime: string
 ): { signal: 'long' | 'short' | null; confidence: number; skipReason?: string } {
   
   // COOL-OFF RULE: Skip if >8% pre-market
@@ -526,14 +546,12 @@ function checkORBSignal(
 
   // Long signal: price above ORB high with volume
   if (currentPrice > orbRange.high && volumeCondition) {
-    // VIX FILTER: No longs if VIX > 25
-    if (vixLevel > CONFIG.VIX_SHORTS_ONLY_THRESHOLD) {
-      return { signal: null, confidence: 0, skipReason: `VIX ${vixLevel.toFixed(1)} > 25 - shorts only` };
-    }
-    
-    // BEAR MARKET FILTER: No longs in bearish regime
-    if (marketRegime === 'bearish') {
-      return { signal: null, confidence: 0, skipReason: 'Bear market - shorts only' };
+    // COMBINED REGIME FILTER: No longs unless in Bull Regime
+    if (!longsAllowed) {
+      const reason = regime === 'elevated_vol' 
+        ? 'Elevated Vol regime (VIX >25) - shorts only'
+        : 'Bear regime (SPY below 200-SMA) - shorts only';
+      return { signal: null, confidence: 0, skipReason: reason };
     }
     
     // INTRADAY MOMENTUM FILTER: Must be above 20-period VWAP on low volume days
@@ -784,7 +802,7 @@ serve(async (req) => {
     // ACTION: GET MARKET REGIME
     // =====================
     if (action === 'get_market_regime') {
-      const regimeData = await getSPYRegime(apiKeyId, secretKey);
+      const regimeData = await getCombinedRegime(apiKeyId, secretKey);
       
       return new Response(
         JSON.stringify(regimeData),
@@ -796,9 +814,8 @@ serve(async (req) => {
     // ACTION: GET SESSION STATE
     // =====================
     if (action === 'get_session_state') {
-      const vixLevel = await getVIXLevel(apiKeyId, secretKey);
       const positions = await getPositions(apiKeyId, secretKey, isPaper);
-      const regimeData = await getSPYRegime(apiKeyId, secretKey);
+      const regimeData = await getCombinedRegime(apiKeyId, secretKey);
       
       // Check for pre-market changes on all tickers
       const premarketChanges: Record<string, number> = {};
@@ -808,10 +825,11 @@ serve(async (req) => {
       
       return new Response(
         JSON.stringify({ 
-          vixLevel, 
+          vixLevel: regimeData.vixLevel, 
           positions,
           premarketChanges,
           marketRegime: regimeData.regime,
+          longsAllowed: regimeData.longsAllowed,
           spyPrice: regimeData.spyPrice,
           spy200SMA: regimeData.sma200,
           currentTimeET: `${timeInfo.hours}:${timeInfo.mins.toString().padStart(2, '0')}`,
@@ -845,9 +863,9 @@ serve(async (req) => {
         );
       }
 
-      // Get VIX level
-      const vixLevel = sessionState?.vixLevel || await getVIXLevel(apiKeyId, secretKey);
-      console.log(`[VIX] Current level: ${vixLevel.toFixed(1)}`);
+      // Get combined regime (SPY + VIX)
+      const regimeData = await getCombinedRegime(apiKeyId, secretKey);
+      console.log(`[REGIME] ${regimeData.regime.toUpperCase()} - Longs: ${regimeData.longsAllowed ? 'YES' : 'NO'}`);
 
       const signals: TradeSignal[] = [];
       const skipReasons: Record<string, string> = {};
@@ -883,10 +901,10 @@ serve(async (req) => {
           marketData.price,
           marketData.volume,
           marketData.avgVolume,
-          vixLevel,
           premarketChange,
           intradayMetrics,
-          marketRegime || 'neutral'
+          regimeData.longsAllowed,
+          regimeData.regime
         );
 
         if (skipReason) {
@@ -911,7 +929,7 @@ serve(async (req) => {
             marketData.price, 
             stopLoss, 
             rank,
-            vixLevel
+            regimeData.vixLevel
           );
 
           signals.push({
@@ -937,7 +955,9 @@ serve(async (req) => {
           skipReasons,
           tradesToday: accountInfo.tradesToday,
           equity: accountInfo.equity,
-          vixLevel,
+          vixLevel: regimeData.vixLevel,
+          regime: regimeData.regime,
+          longsAllowed: regimeData.longsAllowed,
         }),
         { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
       );

@@ -1,18 +1,49 @@
 import { AlertTriangle, CheckCircle, TrendingUp, TrendingDown, Clock, Shield, Zap, Target } from 'lucide-react';
 import { MAX_GROWTH_CONFIG } from '@/lib/orbConfig';
+import { cn } from '@/lib/utils';
 
 interface RulesCardProps {
   tradesToday: number;
   dailyPnLPercent: number;
   vixLevel?: number;
   isExtendedSession?: boolean;
+  marketRegime?: 'bull' | 'elevated_vol' | 'bear';
+  spyPrice?: number;
+  spy200SMA?: number;
 }
 
-export function RulesCard({ tradesToday, dailyPnLPercent, vixLevel = 20, isExtendedSession = false }: RulesCardProps) {
+const regimeConfig = {
+  bull: {
+    label: 'Bull Regime',
+    color: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
+    description: 'SPY > 200-SMA & VIX ≤25 → Longs + Shorts allowed',
+  },
+  elevated_vol: {
+    label: 'Elevated Vol',
+    color: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
+    description: 'SPY > 200-SMA but VIX >25 → Shorts only',
+  },
+  bear: {
+    label: 'Bear Regime',
+    color: 'bg-red-500/20 text-red-400 border-red-500/30',
+    description: 'SPY < 200-SMA → Shorts only',
+  },
+};
+
+export function RulesCard({ 
+  tradesToday, 
+  dailyPnLPercent, 
+  vixLevel = 20, 
+  isExtendedSession = false,
+  marketRegime = 'bull',
+  spyPrice = 0,
+  spy200SMA = 0,
+}: RulesCardProps) {
   const maxTradesHit = tradesToday >= MAX_GROWTH_CONFIG.MAX_TRADES_PER_DAY;
   const dailyLossHit = dailyPnLPercent <= -(MAX_GROWTH_CONFIG.MAX_DAILY_LOSS_PERCENT * 100);
-  const vixShortsOnly = vixLevel > MAX_GROWTH_CONFIG.VIX_SHORTS_ONLY;
   const vixDoubleSize = vixLevel < MAX_GROWTH_CONFIG.VIX_DOUBLE_SIZE;
+  const regime = regimeConfig[marketRegime] || regimeConfig.bull;
+  const longsAllowed = marketRegime === 'bull';
 
   return (
     <div className="bg-card border border-border rounded-xl p-4 space-y-4">
@@ -20,6 +51,32 @@ export function RulesCard({ tradesToday, dailyPnLPercent, vixLevel = 20, isExten
         <Shield className="h-5 w-5 text-primary" />
         Max-Growth Rules
       </h3>
+
+      {/* Regime Badge */}
+      <div className={cn(
+        "rounded-lg p-3 border",
+        regime.color
+      )}>
+        <div className="flex items-center justify-between mb-2">
+          <span className="font-bold text-sm">{regime.label}</span>
+          {longsAllowed ? (
+            <span className="text-xs px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400">
+              LONGS + SHORTS
+            </span>
+          ) : (
+            <span className="text-xs px-2 py-0.5 rounded bg-red-500/20 text-red-400">
+              SHORTS ONLY
+            </span>
+          )}
+        </div>
+        <p className="text-xs opacity-80">{regime.description}</p>
+        {spyPrice > 0 && spy200SMA > 0 && (
+          <div className="flex items-center gap-3 mt-2 text-xs font-mono">
+            <span>SPY: ${spyPrice.toFixed(2)}</span>
+            <span className="opacity-60">200-SMA: ${spy200SMA.toFixed(2)}</span>
+          </div>
+        )}
+      </div>
       
       {/* Session Info */}
       <div className="bg-muted/30 rounded-lg p-3">
@@ -43,17 +100,14 @@ export function RulesCard({ tradesToday, dailyPnLPercent, vixLevel = 20, isExten
             <Zap className="h-4 w-4" />
             VIX Level
           </span>
-          <span className={`font-mono font-bold ${vixShortsOnly ? 'text-red-400' : vixDoubleSize ? 'text-emerald-400' : 'text-muted-foreground'}`}>
+          <span className={cn(
+            "font-mono font-bold",
+            vixLevel > 25 ? 'text-red-400' : vixDoubleSize ? 'text-emerald-400' : 'text-muted-foreground'
+          )}>
             {vixLevel.toFixed(1)}
           </span>
         </div>
-        {vixShortsOnly && (
-          <div className="flex items-center gap-2 text-xs text-red-400 bg-red-400/10 rounded px-2 py-1">
-            <TrendingDown className="h-3 w-3" />
-            VIX &gt;25 → SHORTS ONLY
-          </div>
-        )}
-        {vixDoubleSize && (
+        {vixDoubleSize && marketRegime === 'bull' && (
           <div className="flex items-center gap-2 text-xs text-emerald-400 bg-emerald-400/10 rounded px-2 py-1">
             <TrendingUp className="h-3 w-3" />
             VIX &lt;18 → 2x SIZE on #1
