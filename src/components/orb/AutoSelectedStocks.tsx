@@ -315,11 +315,9 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
                       {stock.exchange}
                     </Badge>
                     {stock.isFallback && (
-                      <div className="mt-1">
-                        <Badge variant="secondary" className="text-xs bg-amber-500/20 text-amber-500 border-amber-500/30">
-                          Fallback – High-Probability ORB
-                        </Badge>
-                      </div>
+                      <Badge variant="secondary" className="ml-2 text-xs bg-amber-500/20 text-amber-500 border-amber-500/30">
+                        Fallback
+                      </Badge>
                     )}
                   </div>
 
