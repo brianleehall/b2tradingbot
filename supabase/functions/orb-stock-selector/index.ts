@@ -338,9 +338,10 @@ serve(async (req) => {
 
     for (const symbol of SCAN_UNIVERSE) {
       const metadata = STOCK_METADATA[symbol];
+      const floatLimit = 500; // Relaxed from 100M to 500M for more candidates
       
-      // Skip if no metadata or float > 100M (user's requirement)
-      if (!metadata || metadata.float > 100) {
+      // Skip if no metadata or float > limit
+      if (!metadata || metadata.float > floatLimit) {
         continue;
       }
 
@@ -355,23 +356,21 @@ serve(async (req) => {
         : 0;
       
       // RVOL = pre-market volume / (avg daily volume / trading minutes ratio)
-      // Pre-market is ~5.5 hours (4am-9:30am), regular session is ~6.5 hours
-      const expectedPreMarketVolume = avgVolume * 0.15; // ~15% of daily volume in pre-market typically
+      const expectedPreMarketVolume = avgVolume * 0.15;
       const rvol = expectedPreMarketVolume > 0 ? preMarketVolume / expectedPreMarketVolume : 0;
 
-      // Apply selection criteria:
-      // - RVOL >= 3.0
-      // - Pre-market change >= ±2.0%
-      // - Avg daily volume >= 1,000,000
-      // - Current price >= $20
-      // - Float <= 100M (already filtered above)
-      // - Exchange = NASDAQ or NYSE (all in our list are)
+      // Relaxed selection criteria:
+      // - RVOL >= 1.5 (relaxed from 3.0)
+      // - Pre-market change >= ±1.5% (relaxed from 2.0%)
+      // - Avg daily volume >= 500,000 (relaxed from 1M)
+      // - Current price >= $10 (relaxed from $20)
+      // - Float <= 500M (relaxed from 100M)
       
       if (
-        rvol >= 3.0 &&
-        Math.abs(preMarketChange) >= 2.0 &&
-        avgVolume >= 1000000 &&
-        currentPrice >= 20
+        rvol >= 1.5 &&
+        Math.abs(preMarketChange) >= 1.5 &&
+        avgVolume >= 500000 &&
+        currentPrice >= 10
       ) {
         qualifiedStocks.push({
           symbol,
