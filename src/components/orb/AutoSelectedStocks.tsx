@@ -10,10 +10,11 @@ import { getETTime } from '@/lib/orbConfig';
 
 export interface SelectedStock {
   symbol: string;
-  preMarketChange: number;
+  priceChange: number;      // Yesterday's % change (was preMarketChange)
   rvol: number;
   price: number;
   avgVolume: number;
+  volume?: number;          // Yesterday's actual volume
   float?: number;
   exchange: string;
   isChecked: boolean;
@@ -91,6 +92,8 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
 
       const stocksWithChecked = (data.stocks || []).map((stock: Omit<SelectedStock, 'isChecked'>) => ({
         ...stock,
+        // Map priceChange for compatibility (API returns priceChange, not preMarketChange)
+        priceChange: stock.priceChange ?? (stock as any).preMarketChange ?? 0,
         isChecked: true, // All checked by default
       }));
 
@@ -127,7 +130,7 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
     fetchStocks();
   }, [fetchStocks, onMarketRegimeChange]);
 
-  // Auto-refresh at 9:15 AM ET
+  // Auto-refresh at 8:00 AM ET (uses previous day's EOD data)
   useEffect(() => {
     const checkAndRefresh = () => {
       const et = getETTime();
@@ -135,9 +138,9 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
       const minutes = et.getMinutes();
       const day = et.getDay();
 
-      // Only on weekdays at exactly 9:15 AM ET
-      if (day !== 0 && day !== 6 && hours === 9 && minutes === 15) {
-        console.log('Auto-refreshing stock selection at 9:15 AM ET');
+      // Only on weekdays at exactly 8:00 AM ET
+      if (day !== 0 && day !== 6 && hours === 8 && minutes === 0) {
+        console.log('Auto-refreshing stock selection at 8:00 AM ET (using EOD data)');
         fetchStocks();
       }
     };
@@ -262,7 +265,7 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
         {isLoading ? (
           <div className="flex items-center justify-center py-12">
             <Loader2 className="h-8 w-8 animate-spin text-primary" />
-            <span className="ml-3 text-muted-foreground">Scanning pre-market...</span>
+            <span className="ml-3 text-muted-foreground">Scanning yesterday's EOD data...</span>
           </div>
         ) : error ? (
           <div className="flex items-center justify-center py-8 text-destructive">
@@ -311,19 +314,20 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
                     </Badge>
                   </div>
 
-                  {/* Pre-market Change */}
+                  {/* Yesterday's Price Change */}
                   <div className="flex items-center gap-2 mb-2">
-                    {stock.preMarketChange >= 0 ? (
+                    {stock.priceChange >= 0 ? (
                       <TrendingUp className="h-5 w-5 text-emerald-500" />
                     ) : (
                       <TrendingDown className="h-5 w-5 text-red-500" />
                     )}
                     <span className={cn(
                       "text-2xl font-bold",
-                      stock.preMarketChange >= 0 ? "text-emerald-500" : "text-red-500"
+                      stock.priceChange >= 0 ? "text-emerald-500" : "text-red-500"
                     )}>
-                      {stock.preMarketChange >= 0 ? '+' : ''}{stock.preMarketChange.toFixed(2)}%
+                      {stock.priceChange >= 0 ? '+' : ''}{stock.priceChange.toFixed(2)}%
                     </span>
+                    <span className="text-xs text-muted-foreground">(yesterday)</span>
                   </div>
 
                   {/* RVOL */}
@@ -359,10 +363,11 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
               <div className="text-sm text-muted-foreground">
                 <span className="font-medium text-foreground">{checkedCount}</span> of {stocks.length} stocks selected for trading
               </div>
-              <div className="flex gap-2 text-xs">
+              <div className="flex gap-2 text-xs flex-wrap">
                 <Badge variant="secondary">RVOL ≥ 3.0</Badge>
-                <Badge variant="secondary">Change ≥ ±2%</Badge>
-                <Badge variant="secondary">Float ≤ 100M</Badge>
+                <Badge variant="secondary">Change ≥ ±4%</Badge>
+                <Badge variant="secondary">Price ≥ $20</Badge>
+                <Badge variant="secondary">Float ≤ 120M</Badge>
               </div>
             </div>
           </>
