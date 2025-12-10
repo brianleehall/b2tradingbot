@@ -36,6 +36,7 @@ interface AlpacaOrder {
 }
 
 serve(async (req) => {
+  // v2 - Token-based auth fix
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
