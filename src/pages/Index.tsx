@@ -43,11 +43,25 @@ const Index = () => {
   const [showTutorial, setShowTutorial] = useState(false);
   const [riskSettings, setRiskSettings] = useState<RiskSettings>(defaultRiskSettings);
   const [activeORBTickers, setActiveORBTickers] = useState<string[]>([]);
+  const [marketRegime, setMarketRegime] = useState<'bullish' | 'bearish'>('bullish');
 
   // Handler for when auto-selected stocks change
   const handleORBStocksChange = useCallback((symbols: string[]) => {
     setActiveORBTickers(symbols);
     console.log('Active ORB tickers updated:', symbols);
+  }, []);
+
+  // Handler for market regime change
+  const handleMarketRegimeChange = useCallback((regime: 'bullish' | 'bearish') => {
+    setMarketRegime(regime);
+    console.log('Market regime updated:', regime);
+    if (regime === 'bearish') {
+      toast({
+        title: "🐻 Bear Market Mode Active",
+        description: "SPY below 200-SMA. Only SHORT breakouts will be taken.",
+        variant: "default",
+      });
+    }
   }, []);
 
   const credentials = config ? {
@@ -201,6 +215,7 @@ const Index = () => {
         {/* Auto-Selected ORB Stocks - The main feature */}
         <AutoSelectedStocks 
           onStocksChange={handleORBStocksChange}
+          onMarketRegimeChange={handleMarketRegimeChange}
           disabled={config?.autoTradingEnabled}
         />
 
