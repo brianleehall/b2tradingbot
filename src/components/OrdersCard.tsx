@@ -1,20 +1,22 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Order } from '@/lib/types';
 import { cn } from '@/lib/utils';
-import { History, ArrowUpCircle, ArrowDownCircle } from 'lucide-react';
+import { History, ArrowUpCircle, ArrowDownCircle, Loader2 } from 'lucide-react';
 import { formatDistanceToNow } from 'date-fns';
 
 interface OrdersCardProps {
   orders: Order[];
+  isLoading?: boolean;
 }
 
-export function OrdersCard({ orders }: OrdersCardProps) {
+export function OrdersCard({ orders, isLoading }: OrdersCardProps) {
   return (
     <Card className="glass">
       <CardHeader className="pb-2">
         <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
           <History className="w-4 h-4" />
           Recent Orders
+          {isLoading && <Loader2 className="w-3 h-3 animate-spin ml-auto" />}
         </CardTitle>
       </CardHeader>
       <CardContent>

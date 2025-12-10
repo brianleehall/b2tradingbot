@@ -1,19 +1,21 @@
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Position } from '@/lib/types';
 import { cn } from '@/lib/utils';
-import { Briefcase, TrendingUp, TrendingDown } from 'lucide-react';
+import { Briefcase, TrendingUp, TrendingDown, Loader2 } from 'lucide-react';
 
 interface PositionsCardProps {
   positions: Position[];
+  isLoading?: boolean;
 }
 
-export function PositionsCard({ positions }: PositionsCardProps) {
+export function PositionsCard({ positions, isLoading }: PositionsCardProps) {
   return (
     <Card className="glass">
       <CardHeader className="pb-2">
         <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
           <Briefcase className="w-4 h-4" />
           Open Positions
+          {isLoading && <Loader2 className="w-3 h-3 animate-spin ml-auto" />}
         </CardTitle>
       </CardHeader>
       <CardContent>

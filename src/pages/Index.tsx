@@ -11,15 +11,11 @@ import { SettingsModal } from '@/components/SettingsModal';
 import { TutorialModal } from '@/components/TutorialModal';
 import { AIAnalyzerCard } from '@/components/AIAnalyzerCard';
 import { useTheme } from '@/hooks/useTheme';
+import { useAlpacaData } from '@/hooks/useAlpacaData';
 import { storage } from '@/lib/storage';
 import { AlpacaCredentials } from '@/lib/types';
-import { 
-  mockAccount, 
-  mockPositions, 
-  mockOrders, 
-  mockPrices, 
-  strategies 
-} from '@/lib/mockData';
+import { mockPrices, strategies } from '@/lib/mockData';
+import { toast } from '@/hooks/use-toast';
 
 const Index = () => {
   const { theme, toggleTheme } = useTheme();
@@ -28,6 +24,8 @@ const Index = () => {
   const [isConnected, setIsConnected] = useState(false);
   const [selectedStrategy, setSelectedStrategy] = useState<string | null>(null);
   const [isAutoTrading, setIsAutoTrading] = useState(false);
+
+  const { account, positions, orders, isLoading, error, refetch } = useAlpacaData(isConnected);
 
   useEffect(() => {
     // Check if first visit
@@ -51,8 +49,19 @@ const Index = () => {
     setIsAutoTrading(storage.isAutoTradingEnabled());
   }, []);
 
+  useEffect(() => {
+    if (error) {
+      toast({
+        title: "Connection Error",
+        description: error,
+        variant: "destructive",
+      });
+    }
+  }, [error]);
+
   const handleConnect = (credentials: AlpacaCredentials) => {
     setIsConnected(true);
+    refetch();
   };
 
   const handleDisconnect = () => {
@@ -90,7 +99,7 @@ const Index = () => {
       <main className="container mx-auto px-4 py-6 space-y-6">
         {/* Top Row - Portfolio Overview */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-          <PortfolioCard account={mockAccount} />
+          <PortfolioCard account={account} isLoading={isLoading} />
           <div className="lg:col-span-2">
             <PricesCard prices={mockPrices} />
           </div>
@@ -121,8 +130,8 @@ const Index = () => {
 
         {/* Bottom Row - Positions & Orders */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <PositionsCard positions={mockPositions} />
-          <OrdersCard orders={mockOrders} />
+          <PositionsCard positions={positions} isLoading={isLoading} />
+          <OrdersCard orders={orders} isLoading={isLoading} />
         </div>
       </main>
 
