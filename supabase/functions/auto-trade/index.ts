@@ -426,12 +426,44 @@ async function executeTrade(
   }
 }
 
+// Check if within ORB trading window (9:29 AM - 10:30 AM ET)
+function isWithinTradingWindow(): boolean {
+  const now = new Date();
+  // Convert to ET
+  const etTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const day = etTime.getDay();
+  
+  // No trading on weekends
+  if (day === 0 || day === 6) return false;
+  
+  const hours = etTime.getHours();
+  const minutes = etTime.getMinutes();
+  const timeInMinutes = hours * 60 + minutes;
+  
+  // Trading window: 9:29 AM - 10:30 AM ET (569 - 630 minutes)
+  return timeInMinutes >= 569 && timeInMinutes <= 630;
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
   }
 
   console.log("Day trading auto-trade triggered at:", new Date().toISOString());
+
+  // CRITICAL: Check trading window FIRST
+  if (!isWithinTradingWindow()) {
+    const now = new Date();
+    const etTime = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+    console.log(`Outside ORB trading window (9:29-10:30 AM ET). Current ET time: ${etTime.toLocaleTimeString()}`);
+    return new Response(
+      JSON.stringify({ 
+        message: "Outside ORB trading window (9:29 AM - 10:30 AM ET)", 
+        currentTimeET: etTime.toLocaleTimeString() 
+      }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
 
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
