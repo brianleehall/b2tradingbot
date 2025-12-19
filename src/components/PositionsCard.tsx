@@ -1,21 +1,92 @@
+import { useState } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Button } from '@/components/ui/button';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog';
 import { Position } from '@/lib/types';
 import { cn } from '@/lib/utils';
-import { Briefcase, TrendingUp, TrendingDown, Loader2 } from 'lucide-react';
+import { Briefcase, TrendingUp, TrendingDown, Loader2, X } from 'lucide-react';
+import { supabase } from '@/integrations/supabase/client';
+import { toast } from 'sonner';
 
 interface PositionsCardProps {
   positions: Position[];
   isLoading?: boolean;
+  onPositionsClosed?: () => void;
 }
 
-export function PositionsCard({ positions, isLoading }: PositionsCardProps) {
+export function PositionsCard({ positions, isLoading, onPositionsClosed }: PositionsCardProps) {
+  const [isClosing, setIsClosing] = useState(false);
+
+  const handleCloseAllPositions = async () => {
+    setIsClosing(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('alpaca-account', {
+        body: { endpoint: 'close_all_positions' }
+      });
+
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      toast.success(`Closed ${data?.closedCount || 'all'} positions`);
+      onPositionsClosed?.();
+    } catch (err) {
+      console.error('Error closing positions:', err);
+      toast.error(err instanceof Error ? err.message : 'Failed to close positions');
+    } finally {
+      setIsClosing(false);
+    }
+  };
+
   return (
     <Card className="glass">
       <CardHeader className="pb-2">
         <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
           <Briefcase className="w-4 h-4" />
           Open Positions
-          {isLoading && <Loader2 className="w-3 h-3 animate-spin ml-auto" />}
+          {isLoading && <Loader2 className="w-3 h-3 animate-spin" />}
+          {positions.length > 0 && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  className="ml-auto h-7 text-xs"
+                  disabled={isClosing}
+                >
+                  {isClosing ? (
+                    <Loader2 className="w-3 h-3 animate-spin mr-1" />
+                  ) : (
+                    <X className="w-3 h-3 mr-1" />
+                  )}
+                  Close All
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Close All Positions?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This will immediately close all {positions.length} open position{positions.length !== 1 ? 's' : ''} at market price. This action cannot be undone.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction onClick={handleCloseAllPositions}>
+                    Close All Positions
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
         </CardTitle>
       </CardHeader>
       <CardContent>
