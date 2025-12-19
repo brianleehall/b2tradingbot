@@ -3,10 +3,11 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { Loader2, RefreshCw, TrendingUp, TrendingDown, AlertTriangle, Sparkles, ShieldAlert, Zap } from 'lucide-react';
+import { Loader2, RefreshCw, TrendingUp, TrendingDown, AlertTriangle, Sparkles, ShieldAlert, Zap, Mail } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { cn } from '@/lib/utils';
 import { getETTime } from '@/lib/orbConfig';
+import { toast } from 'sonner';
 
 export interface SelectedStock {
   symbol: string;
@@ -38,6 +39,34 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
   const [marketRegime, setMarketRegime] = useState<'bullish' | 'bearish'>('bullish');
   const [spyPrice, setSpyPrice] = useState<number | null>(null);
   const [spy200SMA, setSpy200SMA] = useState<number | null>(null);
+  const [isSendingEmail, setIsSendingEmail] = useState(false);
+
+  const sendDailyEmail = async () => {
+    setIsSendingEmail(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        toast.error('Not authenticated');
+        return;
+      }
+
+      const { data, error: fnError } = await supabase.functions.invoke('send-orb-email', {
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+        },
+      });
+
+      if (fnError) throw fnError;
+      if (data?.error) throw new Error(data.error);
+
+      toast.success(`Email sent to ${session.user.email}`);
+    } catch (err) {
+      console.error('Error sending email:', err);
+      toast.error(err instanceof Error ? err.message : 'Failed to send email');
+    } finally {
+      setIsSendingEmail(false);
+    }
+  };
 
   const saveSelectedTickers = useCallback(async (symbols: string[]) => {
     try {
@@ -217,6 +246,19 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
                 Last scan: {formatTime(lastScanTime)}
               </span>
             )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={sendDailyEmail}
+              disabled={isSendingEmail || isLoading}
+              title="Send daily ORB email"
+            >
+              {isSendingEmail ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Mail className="h-4 w-4" />
+              )}
+            </Button>
             <Button
               variant="outline"
               size="sm"
