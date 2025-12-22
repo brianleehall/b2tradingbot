@@ -541,6 +541,13 @@ serve(async (req) => {
           regimeData.regime
         );
         
+        // Log ORB levels vs current price
+        const distanceToHigh = ((marketData.price - orbRange.high) / orbRange.high * 100).toFixed(2);
+        const distanceToLow = ((marketData.price - orbRange.low) / orbRange.low * 100).toFixed(2);
+        const volumeRatio = (marketData.volume / marketData.avgVolume).toFixed(2);
+        
+        console.log(`[${ticker}] ORB: $${orbRange.low.toFixed(2)} - $${orbRange.high.toFixed(2)} | Price: $${marketData.price.toFixed(2)} | To High: ${distanceToHigh}% | To Low: ${distanceToLow}% | Vol: ${volumeRatio}x`);
+        
         if (!signal) {
           console.log(`[${ticker}] Skip: ${skipReason}`);
           continue;
