@@ -16,10 +16,10 @@ verify_jwt = false
 verify_jwt = true
 
 [functions.analyze-strategy]
-verify_jwt = false
+verify_jwt = true
 
 [functions.admin-close-positions]
-verify_jwt = false
+verify_jwt = true
 
 [functions.send-daily-performance]
 verify_jwt = false
