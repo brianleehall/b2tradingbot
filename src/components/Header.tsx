@@ -1,6 +1,7 @@
-import { Bot, Settings, Sun, Moon, LogOut, User } from 'lucide-react';
+import { Settings, Sun, Moon, LogOut, User } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu';
+import logo from '@/assets/logo.png';
 interface HeaderProps {
   theme: 'light' | 'dark';
   onToggleTheme: () => void;
@@ -22,9 +23,7 @@ export function Header({
   return <header className="glass sticky top-0 z-50 border-b border-border/50">
       <div className="container mx-auto px-4 h-16 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="p-2 rounded-lg bg-primary/10 glow-primary">
-            <Bot className="w-6 h-6 text-primary" />
-          </div>
+          <img src={logo} alt="TradingBot Logo" className="h-10 w-10 object-contain" />
           <div>
             <h1 className="font-semibold text-lg">ORB TradingBot</h1>
             <p className="text-xs text-muted-foreground">AI-Powered Auto Trading</p>
