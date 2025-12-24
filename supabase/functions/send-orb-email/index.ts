@@ -9,6 +9,26 @@ const corsHeaders = {
   "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
 };
 
+// US Market holidays for 2024-2025
+const MARKET_HOLIDAYS = [
+  '2024-01-01', '2024-01-15', '2024-02-19', '2024-03-29', '2024-05-27',
+  '2024-06-19', '2024-07-04', '2024-09-02', '2024-11-28', '2024-12-25',
+  '2025-01-01', '2025-01-20', '2025-02-17', '2025-04-18', '2025-05-26',
+  '2025-06-19', '2025-07-04', '2025-09-01', '2025-11-27', '2025-12-25',
+];
+
+function isMarketOpen(date: Date): boolean {
+  const day = date.getDay();
+  // Weekend check (0 = Sunday, 6 = Saturday)
+  if (day === 0 || day === 6) return false;
+  
+  // Holiday check
+  const dateStr = date.toISOString().split('T')[0];
+  if (MARKET_HOLIDAYS.includes(dateStr)) return false;
+  
+  return true;
+}
+
 interface Stock {
   symbol: string;
   priceChange: number;
@@ -125,6 +145,33 @@ const generateEmailHTML = (data: ScanData): string => {
   `;
 };
 
+// Function to send email to a specific user
+async function sendEmailToUser(supabase: any, userEmail: string, scanData: ScanData): Promise<boolean> {
+  try {
+    const emailHTML = generateEmailHTML(scanData);
+    const regimeEmoji = scanData.marketRegime === 'bullish' ? '🐂' : '🐻';
+    const regimeText = scanData.marketRegime === 'bullish' ? 'Bull' : 'Bear';
+
+    const { error: emailError } = await resend.emails.send({
+      from: "ORB Trading <onboarding@resend.dev>",
+      to: [userEmail],
+      subject: `${regimeEmoji} ${regimeText} Market | Today's ORB Stocks: ${scanData.stocks.map(s => s.symbol).join(', ')}`,
+      html: emailHTML,
+    });
+
+    if (emailError) {
+      console.error(`Email send error for ${userEmail}:`, emailError);
+      return false;
+    }
+
+    console.log(`Email sent successfully to ${userEmail}`);
+    return true;
+  } catch (err) {
+    console.error(`Failed to send email to ${userEmail}:`, err);
+    return false;
+  }
+}
+
 const handler = async (req: Request): Promise<Response> => {
   console.log("send-orb-email function invoked");
 
@@ -134,39 +181,30 @@ const handler = async (req: Request): Promise<Response> => {
   }
 
   try {
-    // Get authorization header
-    const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
-      return new Response(JSON.stringify({ error: 'Missing authorization header' }), {
-        status: 401,
-        headers: { "Content-Type": "application/json", ...corsHeaders },
-      });
-    }
-
-    // Create Supabase client
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Verify the user's token
-    const token = authHeader.replace('Bearer ', '');
-    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
-    
-    if (authError || !user) {
-      console.error("Auth error:", authError);
-      return new Response(JSON.stringify({ error: 'Invalid token' }), {
-        status: 401,
-        headers: { "Content-Type": "application/json", ...corsHeaders },
-      });
+    // Check if this is a scheduled call (no auth header) or manual call (with auth header)
+    const authHeader = req.headers.get('Authorization');
+    const isScheduledCall = !authHeader;
+
+    // For scheduled calls, check if market is open today
+    if (isScheduledCall) {
+      const now = new Date();
+      if (!isMarketOpen(now)) {
+        console.log("Market is closed today, skipping scheduled email");
+        return new Response(
+          JSON.stringify({ message: "Market is closed today, no email sent" }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
     }
 
-    console.log("User authenticated:", user.email);
-
-    // Call the orb-stock-selector to get current data
+    // Get stock data from orb-stock-selector
     const selectorResponse = await fetch(`${supabaseUrl}/functions/v1/orb-stock-selector`, {
       method: 'POST',
       headers: {
-        'Authorization': authHeader,
         'Content-Type': 'application/json',
       },
     });
@@ -184,46 +222,95 @@ const handler = async (req: Request): Promise<Response> => {
       throw new Error("No stock data available");
     }
 
-    // Generate email HTML
-    const emailHTML = generateEmailHTML(scanData);
-    const regimeEmoji = scanData.marketRegime === 'bullish' ? '🐂' : '🐻';
-    const regimeText = scanData.marketRegime === 'bullish' ? 'Bull' : 'Bear';
+    if (isScheduledCall) {
+      // Scheduled call: Send to all users with trading configurations
+      console.log("Processing scheduled email send to all users");
 
-    // Send the email
-    const { data: emailData, error: emailError } = await resend.emails.send({
-      from: "ORB Trading <onboarding@resend.dev>",
-      to: [user.email!],
-      subject: `${regimeEmoji} ${regimeText} Market | Today's ORB Stocks: ${scanData.stocks.map(s => s.symbol).join(', ')}`,
-      html: emailHTML,
-    });
+      const { data: configs, error: configError } = await supabase
+        .from('trading_configurations')
+        .select('user_id');
 
-    if (emailError) {
-      console.error("Email send error:", emailError);
-      throw new Error(emailError.message);
+      if (configError) {
+        console.error("Error fetching configs:", configError);
+        throw configError;
+      }
+
+      if (!configs || configs.length === 0) {
+        console.log("No trading configurations found");
+        return new Response(
+          JSON.stringify({ message: "No users to send emails to" }),
+          { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+
+      const emailsSent: string[] = [];
+
+      for (const config of configs) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('email')
+          .eq('id', config.user_id)
+          .single();
+
+        if (!profile?.email) {
+          console.log(`No email for user ${config.user_id}`);
+          continue;
+        }
+
+        const success = await sendEmailToUser(supabase, profile.email, scanData);
+        if (success) {
+          emailsSent.push(profile.email);
+        }
+      }
+
+      return new Response(
+        JSON.stringify({ 
+          message: `Daily ORB emails sent`,
+          emailsSent: emailsSent.length,
+          recipients: emailsSent,
+          stocks: scanData.stocks.map(s => s.symbol),
+          marketRegime: scanData.marketRegime
+        }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+
+    } else {
+      // Manual call: Send only to the authenticated user
+      const token = authHeader.replace('Bearer ', '');
+      const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+      
+      if (authError || !user) {
+        console.error("Auth error:", authError);
+        return new Response(JSON.stringify({ error: 'Invalid token' }), {
+          status: 401,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      console.log("Manual email request from:", user.email);
+
+      const success = await sendEmailToUser(supabase, user.email!, scanData);
+      
+      if (!success) {
+        throw new Error("Failed to send email");
+      }
+
+      return new Response(
+        JSON.stringify({ 
+          success: true, 
+          message: `Email sent to ${user.email}`,
+          stocks: scanData.stocks.map(s => s.symbol),
+          marketRegime: scanData.marketRegime
+        }),
+        { status: 200, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
     }
 
-    console.log("Email sent successfully:", emailData);
-
-    return new Response(
-      JSON.stringify({ 
-        success: true, 
-        message: `Email sent to ${user.email}`,
-        stocks: scanData.stocks.map(s => s.symbol),
-        marketRegime: scanData.marketRegime
-      }),
-      {
-        status: 200,
-        headers: { "Content-Type": "application/json", ...corsHeaders },
-      }
-    );
   } catch (error: any) {
     console.error("Error in send-orb-email function:", error);
     return new Response(
       JSON.stringify({ error: error.message }),
-      {
-        status: 500,
-        headers: { "Content-Type": "application/json", ...corsHeaders },
-      }
+      { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
 };

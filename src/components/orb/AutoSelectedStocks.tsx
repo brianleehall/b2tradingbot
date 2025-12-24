@@ -251,13 +251,15 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
               size="sm"
               onClick={sendDailyEmail}
               disabled={isSendingEmail || isLoading}
-              title="Send daily ORB email"
+              title="Send Today's ORB Stocks email now"
+              className="gap-2"
             >
               {isSendingEmail ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : (
                 <Mail className="h-4 w-4" />
               )}
+              <span className="hidden sm:inline">Send Email</span>
             </Button>
             <Button
               variant="outline"
