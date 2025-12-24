@@ -1,6 +1,7 @@
 import { Settings, Moon, Sun, Zap, ZapOff } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import logo from '@/assets/logo.png';
 
 interface HeaderProps {
   isDark: boolean;
@@ -23,9 +24,7 @@ export function Header({
     <header className="border-b border-border bg-card/50 backdrop-blur-sm sticky top-0 z-50">
       <div className="max-w-7xl mx-auto px-4 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
-          <div className="h-10 w-10 bg-primary/20 rounded-lg flex items-center justify-center">
-            <Zap className="h-6 w-6 text-primary" />
-          </div>
+          <img src={logo} alt="TradingBot Logo" className="h-10 w-10 object-contain" />
           <div>
             <h1 className="text-xl font-bold">ORB Trading Bot</h1>
             <p className="text-xs text-muted-foreground">5-Minute Opening Range Breakout</p>
