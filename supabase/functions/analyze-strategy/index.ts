@@ -21,12 +21,38 @@ serve(async (req) => {
   }
 
   try {
+    // Verify authentication
+    const authHeader = req.headers.get('Authorization');
+    if (!authHeader) {
+      return new Response(JSON.stringify({ error: "Authentication required" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
+    // Validate the token format (JWT validation is handled by Supabase)
+    const token = authHeader.replace('Bearer ', '');
+    if (!token || token.length < 10) {
+      return new Response(JSON.stringify({ error: "Invalid authentication token" }), {
+        status: 401,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
+
     const LOVABLE_API_KEY = Deno.env.get('LOVABLE_API_KEY');
     if (!LOVABLE_API_KEY) {
       throw new Error('LOVABLE_API_KEY is not configured');
     }
 
     const { symbol, strategy, currentPrice, priceChange, high, low } = await req.json() as AnalysisRequest;
+
+    // Validate inputs to prevent abuse
+    if (!symbol || typeof symbol !== 'string' || symbol.length > 10) {
+      return new Response(JSON.stringify({ error: "Invalid symbol" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     console.log(`Analyzing ${symbol} with strategy: ${strategy}`);
 
