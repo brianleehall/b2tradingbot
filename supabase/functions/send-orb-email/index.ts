@@ -201,21 +201,43 @@ const handler = async (req: Request): Promise<Response> => {
       }
     }
 
-    // Get stock data from orb-stock-selector
-    const selectorResponse = await fetch(`${supabaseUrl}/functions/v1/orb-stock-selector`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-    });
-
-    if (!selectorResponse.ok) {
-      const errorText = await selectorResponse.text();
-      console.error("Failed to get stock data:", errorText);
-      throw new Error(`Failed to fetch stock data: ${errorText}`);
+    let scanData: ScanData;
+    
+    // Try to get stock data from request body (manual call with pre-fetched data)
+    const contentType = req.headers.get('content-type');
+    let bodyData: any = null;
+    
+    if (contentType?.includes('application/json')) {
+      try {
+        bodyData = await req.json();
+      } catch {
+        // No body or invalid JSON
+      }
     }
+    
+    if (bodyData?.stocks && bodyData.stocks.length > 0) {
+      // Use the stock data passed from the frontend (ensures consistency)
+      console.log("Using stock data from request body");
+      scanData = bodyData as ScanData;
+    } else {
+      // Fetch fresh from orb-stock-selector (for scheduled calls)
+      console.log("Fetching stock data from orb-stock-selector");
+      const selectorResponse = await fetch(`${supabaseUrl}/functions/v1/orb-stock-selector`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
 
-    const scanData: ScanData = await selectorResponse.json();
+      if (!selectorResponse.ok) {
+        const errorText = await selectorResponse.text();
+        console.error("Failed to get stock data:", errorText);
+        throw new Error(`Failed to fetch stock data: ${errorText}`);
+      }
+
+      scanData = await selectorResponse.json();
+    }
+    
     console.log("Scan data received:", scanData.stocks?.length, "stocks, regime:", scanData.marketRegime);
 
     if (!scanData.stocks || scanData.stocks.length === 0) {
