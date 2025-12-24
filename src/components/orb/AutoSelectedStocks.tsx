@@ -50,10 +50,28 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
         return;
       }
 
+      // Send the current stock data with the email request to ensure consistency
+      const stockDataForEmail = {
+        stocks: stocks.map(s => ({
+          symbol: s.symbol,
+          priceChange: s.priceChange,
+          rvol: s.rvol,
+          price: s.price,
+          avgVolume: s.avgVolume,
+          exchange: s.exchange,
+          isFallback: s.isFallback,
+        })),
+        marketRegime,
+        spyPrice: spyPrice || 0,
+        spy200SMA: spy200SMA || 0,
+        message,
+      };
+
       const { data, error: fnError } = await supabase.functions.invoke('send-orb-email', {
         headers: {
           Authorization: `Bearer ${session.access_token}`,
         },
+        body: stockDataForEmail,
       });
 
       if (fnError) throw fnError;
