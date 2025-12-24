@@ -435,6 +435,211 @@ async function getAccountInfo(apiKeyId: string, secretKey: string, isPaper: bool
   }
 }
 
+// Core trading logic extracted for reuse
+async function runTradingCycle(supabase: any): Promise<{ results: any[], skipped: boolean, reason?: string }> {
+  const timeInfo = getETTimeInfo();
+  console.log(`[TRADE-CYCLE] Running at ${timeInfo.hours}:${timeInfo.mins.toString().padStart(2, '0')} ET`);
+
+  // Check trading window
+  if (!isWithinTradingWindow()) {
+    return { results: [], skipped: true, reason: 'Outside ORB trading window (9:29-10:30 AM ET)' };
+  }
+
+  // Get active trading configs
+  const { data: configs, error } = await supabase.rpc('get_active_trading_configs');
+  
+  if (error || !configs || configs.length === 0) {
+    return { results: [], skipped: true, reason: 'No active auto-traders' };
+  }
+
+  console.log(`Processing ${configs.length} auto-trading configurations`);
+  const results = [];
+
+  for (const config of configs as TradingConfig[]) {
+    console.log(`\n=== Processing user ${config.user_id} ===`);
+    
+    // Get account info
+    const accountInfo = await getAccountInfo(
+      config.api_key_id, 
+      config.secret_key, 
+      config.is_paper_trading
+    );
+    
+    if (!accountInfo) {
+      console.log('Failed to get account info');
+      continue;
+    }
+    
+    // Check daily loss limit
+    if (accountInfo.dailyPnLPercent <= -(CONFIG.MAX_DAILY_LOSS_PERCENT * 100)) {
+      console.log(`Daily loss limit hit: ${accountInfo.dailyPnLPercent.toFixed(2)}%`);
+      continue;
+    }
+    
+    // Check max trades per day
+    if (accountInfo.tradesToday >= CONFIG.MAX_TRADES_PER_DAY) {
+      console.log(`Max trades reached: ${accountInfo.tradesToday}/${CONFIG.MAX_TRADES_PER_DAY}`);
+      continue;
+    }
+
+    // Get market regime
+    const regimeData = await getCombinedRegime(config.api_key_id, config.secret_key);
+    
+    // Get today's ORB stocks from the daily scan (auto-selected)
+    const today = new Date().toISOString().split('T')[0];
+    const { data: dailyStocks, error: stocksError } = await supabase
+      .from('daily_orb_stocks')
+      .select('symbol')
+      .eq('scan_date', today)
+      .order('rvol', { ascending: false })
+      .limit(4);
+    
+    let tickers: string[];
+    if (dailyStocks && dailyStocks.length > 0) {
+      tickers = dailyStocks.map((s: { symbol: string }) => s.symbol);
+      console.log(`Using today's auto-selected stocks: ${tickers.join(', ')}`);
+    } else {
+      // Fallback: check yesterday's stocks (in case scan hasn't run yet today)
+      const yesterday = new Date();
+      yesterday.setDate(yesterday.getDate() - 1);
+      const yesterdayStr = yesterday.toISOString().split('T')[0];
+      
+      const { data: yesterdayStocks } = await supabase
+        .from('daily_orb_stocks')
+        .select('symbol')
+        .eq('scan_date', yesterdayStr)
+        .order('rvol', { ascending: false })
+        .limit(4);
+      
+      if (yesterdayStocks && yesterdayStocks.length > 0) {
+        tickers = yesterdayStocks.map((s: { symbol: string }) => s.symbol);
+        console.log(`Using yesterday's stocks (today's scan pending): ${tickers.join(', ')}`);
+      } else {
+        // Ultimate fallback to proven ORB leaders
+        tickers = ['NVDA', 'TSLA'];
+        console.log(`Using fallback stocks: ${tickers.join(', ')}`);
+      }
+    }
+    
+    console.log(`Tickers: ${tickers.join(', ')}`);
+    
+    // Process each ticker by rank
+    for (let i = 0; i < tickers.length && accountInfo.tradesToday + i < CONFIG.MAX_TRADES_PER_DAY; i++) {
+      const ticker = tickers[i];
+      const rank = i + 1;
+      
+      // Get ORB range
+      const orbRange = await getORBRange(ticker, config.api_key_id, config.secret_key);
+      if (!orbRange) {
+        console.log(`[${ticker}] No ORB range`);
+        continue;
+      }
+      
+      // Get market data
+      const marketData = await getMarketData(ticker, config.api_key_id, config.secret_key);
+      if (!marketData) {
+        console.log(`[${ticker}] No market data`);
+        continue;
+      }
+      
+      // Get pre-market change
+      const premarketChange = await getPremarketChange(ticker, config.api_key_id, config.secret_key);
+      
+      // Check for signal
+      const { signal, skipReason } = checkORBSignal(
+        orbRange.high,
+        orbRange.low,
+        marketData.price,
+        marketData.volume,
+        marketData.avgVolume,
+        premarketChange,
+        regimeData.longsAllowed,
+        regimeData.regime
+      );
+      
+      // Log ORB levels vs current price
+      const distanceToHigh = ((marketData.price - orbRange.high) / orbRange.high * 100).toFixed(2);
+      const distanceToLow = ((marketData.price - orbRange.low) / orbRange.low * 100).toFixed(2);
+      const volumeRatio = (marketData.volume / marketData.avgVolume).toFixed(2);
+      
+      console.log(`[${ticker}] ORB: $${orbRange.low.toFixed(2)} - $${orbRange.high.toFixed(2)} | Price: $${marketData.price.toFixed(2)} | To High: ${distanceToHigh}% | To Low: ${distanceToLow}% | Vol: ${volumeRatio}x`);
+      
+      if (!signal) {
+        console.log(`[${ticker}] Skip: ${skipReason}`);
+        continue;
+      }
+      
+      // Calculate position size
+      const stopLoss = signal === 'long' ? orbRange.low : orbRange.high;
+      const orbHeight = orbRange.high - orbRange.low;
+      const target = signal === 'long' 
+        ? marketData.price + (2 * orbHeight)
+        : marketData.price - (2 * orbHeight);
+      
+      const { shares, riskPercent } = calculatePositionSize(
+        accountInfo.equity,
+        marketData.price,
+        stopLoss,
+        rank,
+        regimeData.vixLevel
+      );
+      
+      if (shares <= 0) {
+        console.log(`[${ticker}] Position size 0`);
+        continue;
+      }
+      
+      console.log(`[${ticker}] SIGNAL: ${signal.toUpperCase()} @ $${marketData.price.toFixed(2)}, ${shares} shares, Risk: ${(riskPercent * 100).toFixed(1)}%`);
+      
+      // Execute trade
+      const result = await executeTrade(
+        ticker,
+        signal === 'long' ? 'buy' : 'sell',
+        shares,
+        stopLoss,
+        target,
+        config.api_key_id,
+        config.secret_key,
+        config.is_paper_trading
+      );
+      
+      // Log trade
+      await supabase.from('trade_logs').insert({
+        user_id: config.user_id,
+        symbol: ticker,
+        side: signal === 'long' ? 'buy' : 'sell',
+        qty: shares,
+        price: marketData.price,
+        strategy: 'orb-max-growth',
+        status: result.success ? 'success' : 'failed',
+        error_message: result.error || null,
+      });
+      
+      results.push({
+        userId: config.user_id,
+        ticker,
+        signal,
+        shares,
+        price: marketData.price,
+        stopLoss,
+        target,
+        riskPercent,
+        regime: regimeData.regime,
+        executed: result.success,
+        error: result.error,
+      });
+      
+      if (result.success) {
+        console.log(`[${ticker}] ORDER FILLED: ${result.orderId}`);
+      } else {
+        console.log(`[${ticker}] ORDER FAILED: ${result.error}`);
+      }
+    }
+  }
+
+  return { results, skipped: false };
+}
+
 serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -443,7 +648,7 @@ serve(async (req) => {
   const timeInfo = getETTimeInfo();
   console.log(`[AUTO-TRADE] Triggered at ${timeInfo.hours}:${timeInfo.mins.toString().padStart(2, '0')} ET`);
 
-  // Check trading window
+  // Quick check if we're outside trading window entirely
   if (!isWithinTradingWindow()) {
     console.log('Outside ORB trading window (9:29-10:30 AM ET)');
     return new Response(
@@ -457,206 +662,35 @@ serve(async (req) => {
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const supabase = createClient(supabaseUrl, supabaseServiceKey);
 
-    // Get active trading configs
-    const { data: configs, error } = await supabase.rpc('get_active_trading_configs');
+    // Run first trading cycle immediately
+    console.log('\n=== CYCLE 1 (0s) ===');
+    const cycle1 = await runTradingCycle(supabase);
     
-    if (error || !configs || configs.length === 0) {
-      console.log('No active auto-traders');
-      return new Response(
-        JSON.stringify({ message: 'No active auto-traders' }),
-        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
-      );
+    if (cycle1.skipped) {
+      console.log(`Cycle 1 skipped: ${cycle1.reason}`);
+    } else {
+      console.log(`Cycle 1 complete: ${cycle1.results.length} signals processed`);
     }
 
-    console.log(`Processing ${configs.length} auto-trading configurations`);
-    const results = [];
+    // Wait 30 seconds then run second cycle
+    console.log('\n--- Waiting 30 seconds for Cycle 2 ---');
+    await new Promise(resolve => setTimeout(resolve, 30000));
 
-    for (const config of configs as TradingConfig[]) {
-      console.log(`\n=== Processing user ${config.user_id} ===`);
-      
-      // Get account info
-      const accountInfo = await getAccountInfo(
-        config.api_key_id, 
-        config.secret_key, 
-        config.is_paper_trading
-      );
-      
-      if (!accountInfo) {
-        console.log('Failed to get account info');
-        continue;
-      }
-      
-      // Check daily loss limit
-      if (accountInfo.dailyPnLPercent <= -(CONFIG.MAX_DAILY_LOSS_PERCENT * 100)) {
-        console.log(`Daily loss limit hit: ${accountInfo.dailyPnLPercent.toFixed(2)}%`);
-        continue;
-      }
-      
-      // Check max trades per day
-      if (accountInfo.tradesToday >= CONFIG.MAX_TRADES_PER_DAY) {
-        console.log(`Max trades reached: ${accountInfo.tradesToday}/${CONFIG.MAX_TRADES_PER_DAY}`);
-        continue;
-      }
-
-      // Get market regime
-      const regimeData = await getCombinedRegime(config.api_key_id, config.secret_key);
-      
-      // Get today's ORB stocks from the daily scan (auto-selected)
-      const today = new Date().toISOString().split('T')[0];
-      const { data: dailyStocks, error: stocksError } = await supabase
-        .from('daily_orb_stocks')
-        .select('symbol')
-        .eq('scan_date', today)
-        .order('rvol', { ascending: false })
-        .limit(4);
-      
-      let tickers: string[];
-      if (dailyStocks && dailyStocks.length > 0) {
-        tickers = dailyStocks.map((s: { symbol: string }) => s.symbol);
-        console.log(`Using today's auto-selected stocks: ${tickers.join(', ')}`);
-      } else {
-        // Fallback: check yesterday's stocks (in case scan hasn't run yet today)
-        const yesterday = new Date();
-        yesterday.setDate(yesterday.getDate() - 1);
-        const yesterdayStr = yesterday.toISOString().split('T')[0];
-        
-        const { data: yesterdayStocks } = await supabase
-          .from('daily_orb_stocks')
-          .select('symbol')
-          .eq('scan_date', yesterdayStr)
-          .order('rvol', { ascending: false })
-          .limit(4);
-        
-        if (yesterdayStocks && yesterdayStocks.length > 0) {
-          tickers = yesterdayStocks.map((s: { symbol: string }) => s.symbol);
-          console.log(`Using yesterday's stocks (today's scan pending): ${tickers.join(', ')}`);
-        } else {
-          // Ultimate fallback to proven ORB leaders
-          tickers = ['NVDA', 'TSLA'];
-          console.log(`Using fallback stocks: ${tickers.join(', ')}`);
-        }
-      }
-      
-      console.log(`Tickers: ${tickers.join(', ')}`);
-      
-      // Process each ticker by rank
-      for (let i = 0; i < tickers.length && accountInfo.tradesToday + i < CONFIG.MAX_TRADES_PER_DAY; i++) {
-        const ticker = tickers[i];
-        const rank = i + 1;
-        
-        // Get ORB range
-        const orbRange = await getORBRange(ticker, config.api_key_id, config.secret_key);
-        if (!orbRange) {
-          console.log(`[${ticker}] No ORB range`);
-          continue;
-        }
-        
-        // Get market data
-        const marketData = await getMarketData(ticker, config.api_key_id, config.secret_key);
-        if (!marketData) {
-          console.log(`[${ticker}] No market data`);
-          continue;
-        }
-        
-        // Get pre-market change
-        const premarketChange = await getPremarketChange(ticker, config.api_key_id, config.secret_key);
-        
-        // Check for signal
-        const { signal, skipReason } = checkORBSignal(
-          orbRange.high,
-          orbRange.low,
-          marketData.price,
-          marketData.volume,
-          marketData.avgVolume,
-          premarketChange,
-          regimeData.longsAllowed,
-          regimeData.regime
-        );
-        
-        // Log ORB levels vs current price
-        const distanceToHigh = ((marketData.price - orbRange.high) / orbRange.high * 100).toFixed(2);
-        const distanceToLow = ((marketData.price - orbRange.low) / orbRange.low * 100).toFixed(2);
-        const volumeRatio = (marketData.volume / marketData.avgVolume).toFixed(2);
-        
-        console.log(`[${ticker}] ORB: $${orbRange.low.toFixed(2)} - $${orbRange.high.toFixed(2)} | Price: $${marketData.price.toFixed(2)} | To High: ${distanceToHigh}% | To Low: ${distanceToLow}% | Vol: ${volumeRatio}x`);
-        
-        if (!signal) {
-          console.log(`[${ticker}] Skip: ${skipReason}`);
-          continue;
-        }
-        
-        // Calculate position size
-        const stopLoss = signal === 'long' ? orbRange.low : orbRange.high;
-        const orbHeight = orbRange.high - orbRange.low;
-        const target = signal === 'long' 
-          ? marketData.price + (2 * orbHeight)
-          : marketData.price - (2 * orbHeight);
-        
-        const { shares, riskPercent } = calculatePositionSize(
-          accountInfo.equity,
-          marketData.price,
-          stopLoss,
-          rank,
-          regimeData.vixLevel
-        );
-        
-        if (shares <= 0) {
-          console.log(`[${ticker}] Position size 0`);
-          continue;
-        }
-        
-        console.log(`[${ticker}] SIGNAL: ${signal.toUpperCase()} @ $${marketData.price.toFixed(2)}, ${shares} shares, Risk: ${(riskPercent * 100).toFixed(1)}%`);
-        
-        // Execute trade
-        const result = await executeTrade(
-          ticker,
-          signal === 'long' ? 'buy' : 'sell',
-          shares,
-          stopLoss,
-          target,
-          config.api_key_id,
-          config.secret_key,
-          config.is_paper_trading
-        );
-        
-        // Log trade
-        await supabase.from('trade_logs').insert({
-          user_id: config.user_id,
-          symbol: ticker,
-          side: signal === 'long' ? 'buy' : 'sell',
-          qty: shares,
-          price: marketData.price,
-          strategy: 'orb-max-growth',
-          status: result.success ? 'success' : 'failed',
-          error_message: result.error || null,
-        });
-        
-        results.push({
-          userId: config.user_id,
-          ticker,
-          signal,
-          shares,
-          price: marketData.price,
-          stopLoss,
-          target,
-          riskPercent,
-          regime: regimeData.regime,
-          executed: result.success,
-          error: result.error,
-        });
-        
-        if (result.success) {
-          console.log(`[${ticker}] ORDER FILLED: ${result.orderId}`);
-        } else {
-          console.log(`[${ticker}] ORDER FAILED: ${result.error}`);
-        }
-      }
+    // Run second trading cycle
+    console.log('\n=== CYCLE 2 (30s) ===');
+    const cycle2 = await runTradingCycle(supabase);
+    
+    if (cycle2.skipped) {
+      console.log(`Cycle 2 skipped: ${cycle2.reason}`);
+    } else {
+      console.log(`Cycle 2 complete: ${cycle2.results.length} signals processed`);
     }
 
-    console.log(`\n=== AUTO-TRADE COMPLETE: ${results.length} signals processed ===`);
+    const allResults = [...cycle1.results, ...cycle2.results];
+    console.log(`\n=== AUTO-TRADE COMPLETE: ${allResults.length} total signals processed ===`);
 
     return new Response(
-      JSON.stringify({ success: true, results }),
+      JSON.stringify({ success: true, results: allResults, cycles: 2 }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
 
