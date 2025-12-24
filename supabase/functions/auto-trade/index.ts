@@ -501,9 +501,41 @@ serve(async (req) => {
       // Get market regime
       const regimeData = await getCombinedRegime(config.api_key_id, config.secret_key);
       
-      // Get user's selected tickers
-      const { data: userTickers } = await supabase.rpc('get_user_orb_tickers', { p_user_id: config.user_id });
-      const tickers = userTickers && userTickers.length > 0 ? userTickers : ['NVDA', 'TSLA'];
+      // Get today's ORB stocks from the daily scan (auto-selected)
+      const today = new Date().toISOString().split('T')[0];
+      const { data: dailyStocks, error: stocksError } = await supabase
+        .from('daily_orb_stocks')
+        .select('symbol')
+        .eq('scan_date', today)
+        .order('rvol', { ascending: false })
+        .limit(4);
+      
+      let tickers: string[];
+      if (dailyStocks && dailyStocks.length > 0) {
+        tickers = dailyStocks.map((s: { symbol: string }) => s.symbol);
+        console.log(`Using today's auto-selected stocks: ${tickers.join(', ')}`);
+      } else {
+        // Fallback: check yesterday's stocks (in case scan hasn't run yet today)
+        const yesterday = new Date();
+        yesterday.setDate(yesterday.getDate() - 1);
+        const yesterdayStr = yesterday.toISOString().split('T')[0];
+        
+        const { data: yesterdayStocks } = await supabase
+          .from('daily_orb_stocks')
+          .select('symbol')
+          .eq('scan_date', yesterdayStr)
+          .order('rvol', { ascending: false })
+          .limit(4);
+        
+        if (yesterdayStocks && yesterdayStocks.length > 0) {
+          tickers = yesterdayStocks.map((s: { symbol: string }) => s.symbol);
+          console.log(`Using yesterday's stocks (today's scan pending): ${tickers.join(', ')}`);
+        } else {
+          // Ultimate fallback to proven ORB leaders
+          tickers = ['NVDA', 'TSLA'];
+          console.log(`Using fallback stocks: ${tickers.join(', ')}`);
+        }
+      }
       
       console.log(`Tickers: ${tickers.join(', ')}`);
       
