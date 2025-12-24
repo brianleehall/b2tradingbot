@@ -20,3 +20,6 @@ verify_jwt = false
 
 [functions.admin-close-positions]
 verify_jwt = false
+
+[functions.send-daily-performance]
+verify_jwt = false
