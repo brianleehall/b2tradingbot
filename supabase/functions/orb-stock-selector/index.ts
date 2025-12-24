@@ -51,25 +51,26 @@ const FALLBACK_STOCKS = ['NVDA', 'TSLA'];
 const MIN_STOCKS = 2;
 const MAX_STOCKS = 8;
 
-// Float data in millions (rough estimates)
+// Float data in millions - stocks without entries are assumed to have large floats (>150M)
 const STOCK_FLOAT: Record<string, number> = {
-  'TSLA': 145, 'AMD': 140, 'SMCI': 58, 'ARM': 102, 'COIN': 115,
-  'MARA': 85, 'RIOT': 95, 'MSTR': 110, 'HUT': 45, 'CLSK': 75,
+  'SMCI': 58, 'ARM': 102, 'COIN': 115,
+  'MARA': 85, 'RIOT': 95, 'MSTR': 110, 'HUT': 250, 'CLSK': 75,
   'IONQ': 42, 'RGTI': 35, 'QUBT': 28, 'SOUN': 55, 'AFRM': 95,
   'UPST': 78, 'PLUG': 110, 'SOFI': 98, 'HOOD': 88, 'RIVN': 130,
-  'XPEV': 90, 'LI': 95, 'NIO': 120, 'NVDA': 200, 'META': 200,
-  'AAPL': 200, 'GSAT': 80, 'BITF': 65, 'AVGO': 200, 'MRVL': 120,
-  'MU': 140, 'INTC': 200, 'PLTR': 140, 'LCID': 130, 'GOOGL': 200,
-  'AMZN': 200,
+  'XPEV': 90, 'LI': 95, 'NIO': 120, 'GSAT': 80, 'BITF': 65,
+  // Large-cap stocks with float > 150M (excluded by default)
+  'NVDA': 2460, 'TSLA': 3180, 'AMD': 1620, 'META': 2570, 
+  'AAPL': 15200, 'AVGO': 466, 'MRVL': 865, 'MU': 1100, 
+  'INTC': 4250, 'PLTR': 2280, 'LCID': 1900, 'GOOGL': 12000, 'AMZN': 10500,
 };
 
 // Stricter criteria as specified
 const CRITERIA = {
   MIN_RVOL: 2.5,
-  MIN_CHANGE_PCT: 3.5,  // Increased from 3%
+  MIN_CHANGE_PCT: 3.5,
   MIN_AVG_VOLUME: 800000,
-  MIN_PRICE: 20,  // Increased from $15
-  MAX_FLOAT_MILLIONS: 150,
+  MIN_PRICE: 20,  // Strict: close >= $20
+  MAX_FLOAT_MILLIONS: 150,  // Strict: float <= 150M
 };
 
 function getLast5TradingDays(): string[] {
@@ -113,7 +114,9 @@ async function fetchWithRetry(url: string, retries = 2): Promise<Response | null
 }
 
 async function getPolygonDailyBars(symbol: string, fromDate: string, toDate: string, apiKey: string): Promise<any[] | null> {
-  const url = `https://api.polygon.io/v2/aggs/ticker/${symbol}/range/1/day/${fromDate}/${toDate}?adjusted=true&sort=asc&apiKey=${apiKey}`;
+  // Add timestamp to prevent caching
+  const timestamp = Date.now();
+  const url = `https://api.polygon.io/v2/aggs/ticker/${symbol}/range/1/day/${fromDate}/${toDate}?adjusted=true&sort=asc&apiKey=${apiKey}&_t=${timestamp}`;
   const response = await fetchWithRetry(url);
   if (!response || !response.ok) return null;
   const data = await response.json();
@@ -213,9 +216,10 @@ serve(async (req) => {
 
     // Scan each stock
     for (const symbol of SCAN_STOCKS) {
-      // Check float constraint first
+      // STRICT float constraint: exclude if float > 150M or unknown (assume large)
       const stockFloat = STOCK_FLOAT[symbol];
-      if (stockFloat && stockFloat > CRITERIA.MAX_FLOAT_MILLIONS) {
+      if (!stockFloat || stockFloat > CRITERIA.MAX_FLOAT_MILLIONS) {
+        console.log(`Skipping ${symbol}: float ${stockFloat || 'unknown'} > ${CRITERIA.MAX_FLOAT_MILLIONS}M`);
         continue;
       }
 
@@ -256,31 +260,37 @@ serve(async (req) => {
           : 0;
         const rvol = avgVolume30d > 0 ? dayVolume / avgVolume30d : 0;
 
-        // Check ALL criteria
+        // Check ALL criteria STRICTLY
         const meetsRVOL = rvol >= CRITERIA.MIN_RVOL;
         const meetsChange = Math.abs(priceChange) >= CRITERIA.MIN_CHANGE_PCT;
-        const meetsPrice = closePrice >= CRITERIA.MIN_PRICE;
+        const meetsPrice = closePrice >= CRITERIA.MIN_PRICE;  // STRICT: must be >= $20
 
-        if (meetsRVOL && meetsChange && meetsPrice) {
-          // Only keep if this is the most recent qualifying day for this stock
-          const existing = qualifiedStocks.get(symbol);
-          if (!existing || daysAgo < existing.daysAgo) {
-            console.log(`✓ ${symbol} QUALIFIED on ${targetDate} (${daysAgo} days ago): $${closePrice.toFixed(2)}, ${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(1)}%, RVOL ${rvol.toFixed(2)}x`);
-            qualifiedStocks.set(symbol, {
-              symbol,
-              daysAgo,
-              qualifyingDate: targetDate,
-              rvol: Math.round(rvol * 100) / 100,
-              priceChange: Math.round(priceChange * 100) / 100,
-              price: Math.round(closePrice * 100) / 100,
-              avgVolume: Math.round(avgVolume30d),
-              volume: dayVolume,
-              float: stockFloat,
-              exchange: 'NASDAQ',
-            });
+        // Log why stocks don't qualify for debugging
+        if (!meetsRVOL || !meetsChange || !meetsPrice) {
+          if (Math.abs(priceChange) >= 2 || rvol >= 2) {
+            console.log(`✗ ${symbol} on ${targetDate}: $${closePrice.toFixed(2)} (price≥$20: ${meetsPrice}), ${priceChange.toFixed(1)}% (≥±3.5%: ${meetsChange}), RVOL ${rvol.toFixed(2)}x (≥2.5x: ${meetsRVOL})`);
           }
-          break; // Found most recent qualifying day for this stock
+          continue;
         }
+
+        // Only keep if this is the most recent qualifying day for this stock
+        const existing = qualifiedStocks.get(symbol);
+        if (!existing || daysAgo < existing.daysAgo) {
+          console.log(`✓ ${symbol} QUALIFIED on ${targetDate} (${daysAgo} days ago): $${closePrice.toFixed(2)}, ${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(1)}%, RVOL ${rvol.toFixed(2)}x`);
+          qualifiedStocks.set(symbol, {
+            symbol,
+            daysAgo,
+            qualifyingDate: targetDate,
+            rvol: Math.round(rvol * 100) / 100,
+            priceChange: Math.round(priceChange * 100) / 100,
+            price: Math.round(closePrice * 100) / 100,
+            avgVolume: Math.round(avgVolume30d),
+            volume: dayVolume,
+            float: stockFloat,
+            exchange: 'NASDAQ',
+          });
+        }
+        break; // Found most recent qualifying day for this stock
       }
     }
 
