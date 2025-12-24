@@ -23,3 +23,6 @@ verify_jwt = false
 
 [functions.send-daily-performance]
 verify_jwt = false
+
+[functions.send-orb-email]
+verify_jwt = false
