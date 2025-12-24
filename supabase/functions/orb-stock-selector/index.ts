@@ -143,29 +143,27 @@ serve(async (req) => {
   }
 
   try {
-    const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
-      return new Response(JSON.stringify({ error: 'No authorization header' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
-    }
-
     const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
     const supabaseKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
     const polygonApiKey = Deno.env.get('POLYGON_API_KEY');
     const supabase = createClient(supabaseUrl, supabaseKey);
 
-    const token = authHeader.replace('Bearer ', '');
-    let userId: string;
+    // Auth is optional - for internal calls we don't require user auth
+    const authHeader = req.headers.get('Authorization');
+    let userId: string = 'system';
     
-    try {
-      const parts = token.split('.');
-      const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
-      userId = payload.sub;
-      if (!userId) throw new Error('No user ID');
-      console.log("User:", userId);
-    } catch {
-      return new Response(JSON.stringify({ error: 'Unauthorized' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
+    if (authHeader) {
+      try {
+        const token = authHeader.replace('Bearer ', '');
+        const parts = token.split('.');
+        const payload = JSON.parse(atob(parts[1].replace(/-/g, '+').replace(/_/g, '/')));
+        userId = payload.sub || 'system';
+        console.log("User:", userId);
+      } catch {
+        console.log("Using system user (internal call)");
+      }
+    } else {
+      console.log("No auth header - internal/scheduled call");
     }
 
     if (!polygonApiKey) {
