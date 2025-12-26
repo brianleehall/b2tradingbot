@@ -222,20 +222,18 @@ const handler = async (req: Request): Promise<Response> => {
     } else {
       // Fetch fresh from orb-stock-selector (for scheduled calls)
       console.log("Fetching stock data from orb-stock-selector");
-      const selectorResponse = await fetch(`${supabaseUrl}/functions/v1/orb-stock-selector`, {
+      
+      const { data: selectorData, error: selectorError } = await supabase.functions.invoke('orb-stock-selector', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        body: {},
       });
 
-      if (!selectorResponse.ok) {
-        const errorText = await selectorResponse.text();
-        console.error("Failed to get stock data:", errorText);
-        throw new Error(`Failed to fetch stock data: ${errorText}`);
+      if (selectorError) {
+        console.error("Failed to get stock data:", selectorError);
+        throw new Error(`Failed to fetch stock data: ${selectorError.message}`);
       }
 
-      scanData = await selectorResponse.json();
+      scanData = selectorData as ScanData;
     }
     
     console.log("Scan data received:", scanData.stocks?.length, "stocks, regime:", scanData.marketRegime);
