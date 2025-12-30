@@ -384,8 +384,8 @@ serve(async (req) => {
       }
     }
     
-    // Ensure we always have at least MIN_STOCKS
-    if (topStocks.length < MIN_STOCKS) {
+    // Only add remaining fallbacks if we have ZERO stocks (don't pad to minimum)
+    if (topStocks.length === 0) {
       console.log(`Only ${topStocks.length} stocks, adding remaining fallbacks`);
       const existingSymbols = new Set(topStocks.map(s => s.symbol));
       
