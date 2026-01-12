@@ -377,14 +377,19 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
           <>
             {/* Fallback Warning Banner */}
             {message && stocks.some(s => s.isFallback) && (
-              <div className="flex items-center gap-3 mb-4 p-4 bg-amber-500/10 rounded-lg border border-amber-500/30">
-                <AlertTriangle className="h-6 w-6 text-amber-500 shrink-0" />
-                <div>
-                  <span className="text-amber-500 font-semibold">{message}</span>
-                  <p className="text-sm text-amber-500/80 mt-1">
-                    Fallback stocks: {stocks.filter(s => s.isFallback).map(s => s.symbol).join(', ')}
-                  </p>
+              <div className="flex flex-col gap-2 mb-4">
+                <div className="flex items-center gap-3 p-4 bg-amber-500/10 rounded-lg border border-amber-500/30">
+                  <AlertTriangle className="h-6 w-6 text-amber-500 shrink-0" />
+                  <div>
+                    <span className="text-amber-500 font-semibold">{message}</span>
+                    <p className="text-sm text-amber-500/80 mt-1">
+                      Fallback stocks: {stocks.filter(s => s.isFallback).map(s => s.symbol).join(', ')}
+                    </p>
+                  </div>
                 </div>
+                <p className="text-xs text-muted-foreground italic px-1">
+                  Fallback mode active (no real qualifiers this week) – monitoring proven leaders for ORB setups.
+                </p>
               </div>
             )}
 
