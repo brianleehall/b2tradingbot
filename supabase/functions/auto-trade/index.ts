@@ -761,6 +761,83 @@ serve(async (req) => {
   const timeInfo = getETTimeInfo();
   console.log(`[AUTO-TRADE] Triggered at ${timeInfo.hours}:${timeInfo.mins.toString().padStart(2, '0')} ET`);
 
+  // Check for test mode
+  let testMode = false;
+  try {
+    const body = await req.json();
+    testMode = body?.test === true;
+  } catch {
+    // No body or invalid JSON, continue normally
+  }
+
+  // Test mode: simulate aggressive bull conditions
+  if (testMode) {
+    console.log('\n=== TEST MODE: AGGRESSIVE BULL SIMULATION ===');
+    const simulatedRegime = {
+      spyPrice: 520.50,
+      sma200: 480.00,
+      vixLevel: 16.0,
+      regime: 'bull' as const,
+      longsAllowed: true,
+    };
+    const spyAboveSMA = simulatedRegime.spyPrice > simulatedRegime.sma200;
+    
+    console.log(`[TEST] SPY: $${simulatedRegime.spyPrice} > 200-SMA: $${simulatedRegime.sma200} → Above SMA: ${spyAboveSMA}`);
+    console.log(`[TEST] VIX: ${simulatedRegime.vixLevel} ≤ 18 → Low volatility: YES`);
+    console.log(`[TEST] Regime: ${simulatedRegime.regime.toUpperCase()}`);
+    
+    // Test position sizing with mock data
+    const testEquity = 100000;
+    const testEntryPrice = 150.00;
+    const testStopLoss = 148.00; // $2 risk per share
+    
+    const rank1Result = calculatePositionSize(testEquity, testEntryPrice, testStopLoss, 1, simulatedRegime.vixLevel, simulatedRegime.regime, spyAboveSMA);
+    const rank2Result = calculatePositionSize(testEquity, testEntryPrice, testStopLoss, 2, simulatedRegime.vixLevel, simulatedRegime.regime, spyAboveSMA);
+    
+    console.log(`\n[TEST] Position Sizing Simulation:`);
+    console.log(`  Equity: $${testEquity.toLocaleString()}`);
+    console.log(`  Entry: $${testEntryPrice}, Stop: $${testStopLoss} (Risk/share: $${(testEntryPrice - testStopLoss).toFixed(2)})`);
+    console.log(`\n  #1 Ranked Stock:`);
+    console.log(`    Risk: ${(rank1Result.riskPercent * 100).toFixed(1)}% ($${(testEquity * rank1Result.riskPercent).toLocaleString()})`);
+    console.log(`    Shares: ${rank1Result.shares}`);
+    console.log(`    Aggressive Bull Mode: ${rank1Result.isAggressiveBull ? 'YES ✓' : 'NO'}`);
+    console.log(`\n  #2 Ranked Stock:`);
+    console.log(`    Risk: ${(rank2Result.riskPercent * 100).toFixed(1)}% ($${(testEquity * rank2Result.riskPercent).toLocaleString()})`);
+    console.log(`    Shares: ${rank2Result.shares}`);
+    console.log(`    Aggressive Bull Mode: ${rank2Result.isAggressiveBull ? 'YES' : 'NO'}`);
+    
+    // Verify expected values
+    const expectedRisk1 = 0.03; // 3% in aggressive bull
+    const expectedRisk2 = 0.01; // 1% for #2-4
+    const tests = [
+      { name: '#1 risk is 3%', pass: rank1Result.riskPercent === expectedRisk1 },
+      { name: '#2 risk is 1%', pass: rank2Result.riskPercent === expectedRisk2 },
+      { name: '#1 aggressive bull flag', pass: rank1Result.isAggressiveBull === true },
+      { name: '#2 aggressive bull flag false', pass: rank2Result.isAggressiveBull === false },
+      { name: '#1 shares = 1500', pass: rank1Result.shares === 1500 }, // $3000 risk / $2 per share
+      { name: '#2 shares = 500', pass: rank2Result.shares === 500 },   // $1000 risk / $2 per share
+    ];
+    
+    console.log(`\n=== TEST RESULTS ===`);
+    tests.forEach(t => console.log(`  ${t.pass ? '✓' : '✗'} ${t.name}`));
+    const allPassed = tests.every(t => t.pass);
+    console.log(`\n  ${allPassed ? '✓ ALL TESTS PASSED' : '✗ SOME TESTS FAILED'}`);
+    
+    return new Response(
+      JSON.stringify({ 
+        test: true, 
+        allPassed,
+        regime: simulatedRegime,
+        results: {
+          rank1: { ...rank1Result, expectedRisk: '3%' },
+          rank2: { ...rank2Result, expectedRisk: '1%' },
+        },
+        tests
+      }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
+
   // Quick check if we're outside trading window entirely
   if (!isWithinTradingWindow()) {
     console.log('Outside ORB trading window (9:29-10:30 AM ET)');
