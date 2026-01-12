@@ -22,6 +22,7 @@ export interface SelectedStock {
   isFallback?: boolean;
   daysAgo?: number;         // How many days ago stock qualified
   qualifyingDate?: string;  // The date stock qualified
+  isCrypto?: boolean;       // Is this a crypto pair
 }
 
 interface AutoSelectedStocksProps {
@@ -32,6 +33,7 @@ interface AutoSelectedStocksProps {
 
 export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disabled }: AutoSelectedStocksProps) {
   const [stocks, setStocks] = useState<SelectedStock[]>([]);
+  const [cryptoStocks, setCryptoStocks] = useState<SelectedStock[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [lastScanTime, setLastScanTime] = useState<string | null>(null);
   const [message, setMessage] = useState<string | null>(null);
@@ -147,9 +149,22 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
         isFallback: stock.isFallback ?? false,
         daysAgo: stock.daysAgo,
         qualifyingDate: stock.qualifyingDate,
+        isCrypto: false,
+      }));
+
+      // Handle crypto stocks
+      const cryptoWithChecked = (data.cryptoStocks || []).map((stock: Omit<SelectedStock, 'isChecked'>) => ({
+        ...stock,
+        priceChange: stock.priceChange ?? 0,
+        isChecked: true,
+        isFallback: false,
+        daysAgo: stock.daysAgo,
+        qualifyingDate: stock.qualifyingDate,
+        isCrypto: true,
       }));
 
       setStocks(stocksWithChecked);
+      setCryptoStocks(cryptoWithChecked);
       setLastScanTime(data.scannedAt);
       setMessage(data.message || null);
       
@@ -160,14 +175,15 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
       setSpy200SMA(data.spy200SMA || null);
       onMarketRegimeChange?.(regime);
 
-      // Notify parent of selected symbols
-      const checkedSymbols = stocksWithChecked
-        .filter((s: SelectedStock) => s.isChecked)
-        .map((s: SelectedStock) => s.symbol);
-      onStocksChange(checkedSymbols);
+      // Notify parent of selected symbols (stocks + crypto)
+      const allCheckedSymbols = [
+        ...stocksWithChecked.filter((s: SelectedStock) => s.isChecked).map((s: SelectedStock) => s.symbol),
+        ...cryptoWithChecked.filter((s: SelectedStock) => s.isChecked).map((s: SelectedStock) => s.symbol),
+      ];
+      onStocksChange(allCheckedSymbols);
       
       // Save initial selection to database
-      saveSelectedTickers(checkedSymbols);
+      saveSelectedTickers(allCheckedSymbols);
 
     } catch (err) {
       console.error('Failed to fetch stocks:', err);
@@ -203,25 +219,42 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
     return () => clearInterval(interval);
   }, [fetchStocks]);
 
-  const toggleStock = async (symbol: string) => {
+  const toggleStock = async (symbol: string, isCrypto: boolean = false) => {
     if (disabled) return;
 
-    setStocks(prev => {
-      const updated = prev.map(s => 
-        s.symbol === symbol ? { ...s, isChecked: !s.isChecked } : s
-      );
-      
-      // Notify parent of change
-      const checkedSymbols = updated
-        .filter(s => s.isChecked)
-        .map(s => s.symbol);
-      onStocksChange(checkedSymbols);
-      
-      // Save to database
-      saveSelectedTickers(checkedSymbols);
-      
-      return updated;
-    });
+    if (isCrypto) {
+      setCryptoStocks(prev => {
+        const updated = prev.map(s => 
+          s.symbol === symbol ? { ...s, isChecked: !s.isChecked } : s
+        );
+        
+        // Combine with stocks for parent notification
+        const allChecked = [
+          ...stocks.filter(s => s.isChecked).map(s => s.symbol),
+          ...updated.filter(s => s.isChecked).map(s => s.symbol),
+        ];
+        onStocksChange(allChecked);
+        saveSelectedTickers(allChecked);
+        
+        return updated;
+      });
+    } else {
+      setStocks(prev => {
+        const updated = prev.map(s => 
+          s.symbol === symbol ? { ...s, isChecked: !s.isChecked } : s
+        );
+        
+        // Combine with crypto for parent notification
+        const allChecked = [
+          ...updated.filter(s => s.isChecked).map(s => s.symbol),
+          ...cryptoStocks.filter(s => s.isChecked).map(s => s.symbol),
+        ];
+        onStocksChange(allChecked);
+        saveSelectedTickers(allChecked);
+        
+        return updated;
+      });
+    }
   };
 
   const formatVolume = (vol: number) => {
@@ -240,6 +273,7 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
   };
 
   const checkedCount = stocks.filter(s => s.isChecked).length;
+  const checkedCryptoCount = cryptoStocks.filter(s => s.isChecked).length;
 
   return (
     <Card className="border-2 border-primary/30 bg-gradient-to-br from-primary/5 to-transparent">
@@ -447,10 +481,91 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
               ))}
             </div>
 
+            {/* Crypto Section */}
+            {cryptoStocks.length > 0 && (
+              <div className="mt-6">
+                <div className="flex items-center gap-2 mb-4">
+                  <Badge variant="outline" className="bg-orange-500/10 text-orange-500 border-orange-500/30">
+                    🪙 Crypto Pairs
+                  </Badge>
+                  <span className="text-sm text-muted-foreground">Max 20% portfolio • 0.5% risk/trade</span>
+                </div>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  {cryptoStocks.map((stock) => (
+                    <div
+                      key={stock.symbol}
+                      onClick={() => toggleStock(stock.symbol, true)}
+                      className={cn(
+                        "relative p-4 rounded-xl border-2 cursor-pointer transition-all duration-200",
+                        "border-orange-500/50",
+                        stock.isChecked
+                          ? "bg-orange-500/10 shadow-lg shadow-orange-500/20"
+                          : "bg-muted/30 border-border opacity-60 hover:opacity-80",
+                        disabled && "cursor-not-allowed"
+                      )}
+                    >
+                      <div className="absolute top-3 right-3">
+                        <Checkbox
+                          checked={stock.isChecked}
+                          disabled={disabled}
+                          className="h-5 w-5"
+                        />
+                      </div>
+                      <div className="mb-3">
+                        <span className="text-3xl font-bold font-mono tracking-tight">
+                          {stock.symbol}
+                        </span>
+                        <Badge variant="outline" className="ml-2 text-xs bg-orange-500/20 text-orange-500 border-orange-500/30">
+                          CRYPTO
+                        </Badge>
+                        {stock.daysAgo !== undefined && (
+                          <Badge variant="secondary" className="ml-2 text-xs bg-emerald-500/20 text-emerald-500 border-emerald-500/30">
+                            {stock.daysAgo === 0 ? 'Qualified Yesterday' : `Qualified ${stock.daysAgo + 1} days ago`}
+                          </Badge>
+                        )}
+                      </div>
+                      <div className="flex items-center gap-2 mb-2">
+                        {stock.priceChange >= 0 ? (
+                          <TrendingUp className="h-5 w-5 text-emerald-500" />
+                        ) : (
+                          <TrendingDown className="h-5 w-5 text-red-500" />
+                        )}
+                        <span className={cn(
+                          "text-2xl font-bold",
+                          stock.priceChange >= 0 ? "text-emerald-500" : "text-red-500"
+                        )}>
+                          {stock.priceChange >= 0 ? '+' : ''}{stock.priceChange.toFixed(2)}%
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-sm">
+                        <span className="text-muted-foreground">RVOL</span>
+                        <span className={cn(
+                          "font-bold text-lg",
+                          stock.rvol >= 5 ? "text-amber-500" : 
+                          stock.rvol >= 3.5 ? "text-primary" : "text-foreground"
+                        )}>
+                          {stock.rvol.toFixed(1)}x
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-sm mt-1 text-muted-foreground">
+                        <span>${stock.price.toLocaleString()}</span>
+                        <span>Vol: ${formatVolume(stock.avgVolume)}</span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
             {/* Summary */}
             <div className="mt-4 pt-4 border-t border-border flex items-center justify-between flex-wrap gap-2">
               <div className="text-sm text-muted-foreground">
                 <span className="font-medium text-foreground">{checkedCount}</span> of {stocks.length} stocks selected
+                {cryptoStocks.length > 0 && (
+                  <span className="text-orange-500 ml-2">
+                    + {checkedCryptoCount} crypto
+                  </span>
+                )}
                 {stocks.some(s => s.isFallback) && (
                   <span className="text-amber-500 ml-2">
                     ({stocks.filter(s => s.isFallback).length} fallback{stocks.filter(s => s.isFallback).length > 1 ? 's' : ''})

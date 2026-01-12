@@ -18,10 +18,12 @@ interface SelectedStock {
   isFallback?: boolean;
   daysAgo?: number;
   qualifyingDate?: string;
+  isCrypto?: boolean;
 }
 
 interface ScanResult {
   stocks: SelectedStock[];
+  cryptoStocks: SelectedStock[];
   scannedAt: string;
   message?: string;
   marketRegime: 'bullish' | 'bearish';
@@ -29,6 +31,9 @@ interface ScanResult {
   spy200SMA?: number;
   scanDates?: string[];
 }
+
+// Crypto pairs to scan
+const CRYPTO_PAIRS = ['BTCUSD', 'ETHUSD'];
 
 // Expanded scan list - high-volatility stocks known for ORB setups
 const SCAN_STOCKS = [
@@ -121,6 +126,35 @@ async function getPolygonDailyBars(symbol: string, fromDate: string, toDate: str
   if (!response || !response.ok) return null;
   const data = await response.json();
   return data.results || null;
+}
+
+// Get crypto daily bars from Polygon (uses X: prefix for crypto)
+async function getPolygonCryptoBars(symbol: string, fromDate: string, toDate: string, apiKey: string): Promise<any[] | null> {
+  const timestamp = Date.now();
+  // Polygon uses X:BTCUSD format for crypto
+  const polygonSymbol = `X:${symbol}`;
+  const url = `https://api.polygon.io/v2/aggs/ticker/${polygonSymbol}/range/1/day/${fromDate}/${toDate}?adjusted=true&sort=asc&apiKey=${apiKey}&_t=${timestamp}`;
+  const response = await fetchWithRetry(url);
+  if (!response || !response.ok) return null;
+  const data = await response.json();
+  return data.results || null;
+}
+
+// Get last 5 calendar days (crypto trades 24/7, no weekends skip)
+function getLast5CalendarDays(): string[] {
+  const dates: string[] = [];
+  const now = new Date();
+  let current = new Date(now);
+  
+  // Start from yesterday
+  current.setUTCDate(current.getUTCDate() - 1);
+  
+  while (dates.length < 5) {
+    dates.push(current.toISOString().split('T')[0]);
+    current.setUTCDate(current.getUTCDate() - 1);
+  }
+  
+  return dates; // Most recent first
 }
 
 async function getSPY200SMA(apiKey: string): Promise<{ currentPrice: number; sma200: number } | null> {
@@ -415,9 +449,85 @@ serve(async (req) => {
       }
     }
 
-    console.log(`=== COMPLETE: Returning ${topStocks.length} stocks: ${topStocks.map(s => s.symbol).join(', ')} ===`);
+    // ========== CRYPTO SCANNING ==========
+    console.log(`\n=== CRYPTO SCAN (5-Day Lookback) ===`);
+    const cryptoDays = getLast5CalendarDays();
+    console.log(`Scanning crypto days: ${cryptoDays.join(', ')}`);
+    
+    const cryptoStocks: SelectedStock[] = [];
+    
+    // Crypto-specific criteria (no float constraint, different volume)
+    const CRYPTO_CRITERIA = {
+      MIN_RVOL: 2.25,
+      MIN_CHANGE_PCT: 3.5,
+      MIN_AVG_VOLUME: 100000000, // $100M volume for crypto
+    };
+    
+    for (const symbol of CRYPTO_PAIRS) {
+      await new Promise(r => setTimeout(r, 200));
+      
+      const bars = await getPolygonCryptoBars(symbol, fromDate, toDate, polygonApiKey);
+      if (!bars || bars.length < 32) {
+        console.log(`[CRYPTO] ${symbol}: Insufficient data`);
+        continue;
+      }
+      
+      // Calculate 30-day average volume (in USD)
+      const avgVolumeBars = bars.slice(0, -5).slice(-30);
+      const avgVolume30d = avgVolumeBars.length > 0 
+        ? avgVolumeBars.reduce((sum: number, b: any) => sum + (b.v * b.vw || b.v), 0) / avgVolumeBars.length 
+        : 0;
+      
+      // Check each of last 5 days
+      for (let daysAgo = 0; daysAgo < 5; daysAgo++) {
+        const targetDate = cryptoDays[daysAgo];
+        
+        const barIndex = bars.findIndex((b: any) => {
+          const barDate = new Date(b.t).toISOString().split('T')[0];
+          return barDate === targetDate;
+        });
+        
+        if (barIndex <= 0) continue;
+        
+        const dayBar = bars[barIndex];
+        const prevBar = bars[barIndex - 1];
+        
+        const closePrice = dayBar.c;
+        const dayVolume = dayBar.v * (dayBar.vw || closePrice);
+        const priceChange = prevBar.c > 0 
+          ? ((closePrice - prevBar.c) / prevBar.c) * 100 
+          : 0;
+        const rvol = avgVolume30d > 0 ? dayVolume / avgVolume30d : 0;
+        
+        const meetsRVOL = rvol >= CRYPTO_CRITERIA.MIN_RVOL;
+        const meetsChange = Math.abs(priceChange) >= CRYPTO_CRITERIA.MIN_CHANGE_PCT;
+        
+        console.log(`[CRYPTO] ${symbol} on ${targetDate}: $${closePrice.toFixed(2)}, ${priceChange.toFixed(1)}%, RVOL ${rvol.toFixed(2)}x (RVOL≥2.25: ${meetsRVOL}, Change≥3.5%: ${meetsChange})`);
+        
+        if (meetsRVOL && meetsChange) {
+          console.log(`✓ ${symbol} QUALIFIED (crypto)`);
+          cryptoStocks.push({
+            symbol,
+            priceChange: Math.round(priceChange * 100) / 100,
+            rvol: Math.round(rvol * 100) / 100,
+            price: Math.round(closePrice * 100) / 100,
+            avgVolume: Math.round(avgVolume30d),
+            volume: Math.round(dayVolume),
+            exchange: 'CRYPTO',
+            daysAgo,
+            qualifyingDate: targetDate,
+            isFallback: false,
+            isCrypto: true,
+          });
+          break; // Found most recent qualifying day
+        }
+      }
+    }
+    
+    console.log(`Crypto scan complete: ${cryptoStocks.length} qualified`);
+    console.log(`=== COMPLETE: Returning ${topStocks.length} stocks + ${cryptoStocks.length} crypto: ${[...topStocks, ...cryptoStocks].map(s => s.symbol).join(', ')} ===`);
 
-    // Save to database
+    // Save to database (stocks only, crypto handled separately)
     if (topStocks.length > 0) {
       const todayDate = new Date().toISOString().split('T')[0];
       await supabase.from('daily_orb_stocks').delete().eq('scan_date', todayDate);
@@ -442,14 +552,16 @@ serve(async (req) => {
 
     return new Response(JSON.stringify({
       stocks: topStocks,
+      cryptoStocks,
       scannedAt: new Date().toISOString(),
       marketRegime,
       spyPrice: spyData?.currentPrice,
       spy200SMA: spyData?.sma200,
       scanDates: tradingDays,
+      cryptoDates: cryptoDays,
       message: qualifiedCount === 0 
         ? `No stocks qualified in past 5 days - showing ${fallbackCount} proven ORB leaders` 
-        : `${qualifiedCount} stocks qualified across 5-day lookback`,
+        : `${qualifiedCount} stocks + ${cryptoStocks.length} crypto qualified across 5-day lookback`,
     }), { headers: { ...corsHeaders, 'Content-Type': 'application/json' } });
 
   } catch (error) {
