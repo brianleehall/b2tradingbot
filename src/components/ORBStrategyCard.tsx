@@ -49,9 +49,9 @@ export function ORBStrategyCard({
                 5-Minute Opening Range Breakout
               </p>
               <div className="flex flex-col gap-1.5 mt-2 text-xs text-muted-foreground">
-                <div className="flex items-center gap-1">
-                  <Clock className="w-3 h-3" />
-                  <span>9:30 – 11:30 ET (dynamic: flatten 10:15 unless +1.5R, then trail to 11:30)</span>
+                <div className="flex items-start gap-1">
+                  <Clock className="w-3 h-3 mt-0.5 shrink-0" />
+                  <span>9:30 – 11:30 ET (dynamic: flatten at 10:15 unless +1.5R early, then trail to 11:30)</span>
                 </div>
                 <div className="flex items-center gap-1">
                   <Shield className="w-3 h-3" />
@@ -92,7 +92,7 @@ export function ORBStrategyCard({
               </span>
             </div>
             <p className="text-[10px] text-muted-foreground">
-              2–3% on #1 stock in bull regime • 1% on #2-4
+              2–3% on #1 ranked stock in bull regime, base 1% on #2-4
             </p>
           </div>
 
