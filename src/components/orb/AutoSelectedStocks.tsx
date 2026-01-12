@@ -458,8 +458,11 @@ export function AutoSelectedStocks({ onStocksChange, onMarketRegimeChange, disab
                 )}
               </div>
               <div className="flex gap-2 text-xs flex-wrap">
+                <Badge variant="outline" className="bg-primary/10 text-primary border-primary/30">
+                  Current focus: Tech/AI
+                </Badge>
                 <Badge variant="secondary">5-Day Lookback</Badge>
-                <Badge variant="secondary">RVOL ≥ 2.5x</Badge>
+                <Badge variant="secondary">RVOL ≥ 2.25x</Badge>
                 <Badge variant="secondary">Change ≥ ±3.5%</Badge>
                 <Badge variant="secondary">Price ≥ $20</Badge>
               </div>

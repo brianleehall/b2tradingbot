@@ -46,9 +46,9 @@ const SCAN_STOCKS = [
   'PLUG', 'GSAT', 'META', 'AAPL', 'GOOGL', 'AMZN',
 ];
 
-// Only 2 fallbacks as specified
-const FALLBACK_STOCKS = ['NVDA', 'TSLA'];
-const MIN_STOCKS = 2;
+// 4 fallback stocks when zero qualify - "Proven ORB Leaders"
+const FALLBACK_STOCKS = ['NVDA', 'TSLA', 'AMD', 'SMCI'];
+const MIN_FALLBACK_STOCKS = 4;
 const MAX_STOCKS = 8;
 
 // Float data in millions - stocks without entries are assumed to have large floats (>150M)
@@ -384,21 +384,23 @@ serve(async (req) => {
       }
     }
     
-    // Only add remaining fallbacks if we have ZERO stocks (don't pad to minimum)
+    // Only add fallbacks if we have ZERO stocks - add all 4 proven ORB leaders
     if (topStocks.length === 0) {
-      console.log(`Only ${topStocks.length} stocks, adding remaining fallbacks`);
-      const existingSymbols = new Set(topStocks.map(s => s.symbol));
+      console.log(`No stocks qualified across 5 days. Adding ${MIN_FALLBACK_STOCKS} fallbacks: ${FALLBACK_STOCKS.join(', ')}`);
+      
+      const staticData: Record<string, { price: number; avgVolume: number }> = {
+        'NVDA': { price: 185, avgVolume: 250000000 },
+        'TSLA': { price: 445, avgVolume: 100000000 },
+        'AMD': { price: 120, avgVolume: 50000000 },
+        'SMCI': { price: 30, avgVolume: 20000000 },
+      };
       
       for (const fallback of FALLBACK_STOCKS) {
-        if (topStocks.length >= MIN_STOCKS) break;
-        if (existingSymbols.has(fallback)) continue;
+        if (topStocks.length >= MIN_FALLBACK_STOCKS) break;
         
-        const staticData: Record<string, { price: number; avgVolume: number }> = {
-          'NVDA': { price: 185, avgVolume: 250000000 },
-          'TSLA': { price: 445, avgVolume: 100000000 },
-        };
         const data = staticData[fallback] || { price: 100, avgVolume: 10000000 };
         
+        console.log(`+ Fallback ${fallback} (static data)`);
         topStocks.push({
           symbol: fallback,
           priceChange: 0,
