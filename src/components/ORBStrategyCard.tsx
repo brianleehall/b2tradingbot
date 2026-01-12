@@ -48,10 +48,10 @@ export function ORBStrategyCard({
               <p className="text-xs text-muted-foreground mt-1">
                 5-Minute Opening Range Breakout
               </p>
-              <div className="flex items-center gap-4 mt-2 text-xs text-muted-foreground">
+              <div className="flex flex-col gap-1.5 mt-2 text-xs text-muted-foreground">
                 <div className="flex items-center gap-1">
                   <Clock className="w-3 h-3" />
-                  <span>9:30 - 10:30 ET</span>
+                  <span>9:30 – 11:30 ET (dynamic: flatten 10:15 unless +1.5R, then trail to 11:30)</span>
                 </div>
                 <div className="flex items-center gap-1">
                   <Shield className="w-3 h-3" />
@@ -88,17 +88,12 @@ export function ORBStrategyCard({
                 <span className="text-xs font-medium">Risk/Trade</span>
               </div>
               <span className="font-mono text-xs font-semibold text-primary">
-                {riskSettings.maxRiskPerTrade}%
+                1–3% tiered
               </span>
             </div>
-            <Slider
-              value={[riskSettings.maxRiskPerTrade]}
-              onValueChange={([value]) => onRiskSettingsChange({ maxRiskPerTrade: value })}
-              max={3}
-              min={0.5}
-              step={0.5}
-              className="w-full"
-            />
+            <p className="text-[10px] text-muted-foreground">
+              2–3% on #1 stock in bull regime • 1% on #2-4
+            </p>
           </div>
 
           {/* Max Trades Per Day */}
