@@ -69,7 +69,8 @@ export const MAX_GROWTH_CONFIG = {
   REENTRY_END: 10 * 60 + 5,    // 10:05 AM
   
   // Risk management
-  TIER1_RISK: 0.02,            // 2% for #1 ranked stock
+  TIER1_RISK: 0.02,            // 2% for #1 ranked stock (default)
+  TIER1_AGGRESSIVE_RISK: 0.03, // 3% for #1 in aggressive bull mode
   TIER2_RISK: 0.01,            // 1% for #2-4
   MAX_TRADES_PER_DAY: 3,
   MAX_DAILY_LOSS_PERCENT: 0.03,

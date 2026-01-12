@@ -31,7 +31,8 @@ const CONFIG = {
   REENTRY_END: 10 * 60 + 5,    // 10:05 AM
   
   // Risk management
-  TIER1_RISK: 0.02,            // 2% for #1 ranked stock
+  TIER1_RISK: 0.02,            // 2% for #1 ranked stock (default)
+  TIER1_AGGRESSIVE_RISK: 0.03, // 3% for #1 in aggressive bull mode
   TIER2_RISK: 0.01,            // 1% for #2-4
   MAX_TRADES_PER_DAY: 3,
   MAX_DAILY_LOSS_PERCENT: 0.03, // -3% daily stop
@@ -320,29 +321,34 @@ function checkORBSignal(
   return { signal: null, skipReason: 'No breakout signal' };
 }
 
-// Calculate tiered position size
+// Calculate tiered position size with aggressive bull mode
 function calculatePositionSize(
   equity: number,
   entryPrice: number,
   stopLoss: number,
   rank: number,
-  vixLevel: number
-): { shares: number; riskPercent: number } {
+  vixLevel: number,
+  regime: 'bull' | 'elevated_vol' | 'bear',
+  spyAboveSMA: boolean
+): { shares: number; riskPercent: number; isAggressiveBull: boolean } {
   let riskPercent = rank === 1 ? CONFIG.TIER1_RISK : CONFIG.TIER2_RISK;
+  let isAggressiveBull = false;
   
-  // VIX double size on #1 if VIX < 18
-  if (rank === 1 && vixLevel < CONFIG.VIX_DOUBLE_SIZE_THRESHOLD) {
-    riskPercent *= 2;
-    console.log(`VIX ${vixLevel.toFixed(1)} < 18 - Doubling position size on #1`);
+  // Aggressive Bull Mode: SPY > 200-SMA AND VIX ≤ 18
+  // Set #1 stock risk to 3% instead of 2%
+  if (rank === 1 && spyAboveSMA && vixLevel <= CONFIG.VIX_DOUBLE_SIZE_THRESHOLD) {
+    riskPercent = CONFIG.TIER1_AGGRESSIVE_RISK;
+    isAggressiveBull = true;
+    console.log(`[AGGRESSIVE BULL] SPY > 200-SMA & VIX ${vixLevel.toFixed(1)} ≤ 18 → 3% risk on #1`);
   }
   
   const maxRisk = equity * riskPercent;
   const riskPerShare = Math.abs(entryPrice - stopLoss);
   
-  if (riskPerShare <= 0) return { shares: 0, riskPercent };
+  if (riskPerShare <= 0) return { shares: 0, riskPercent, isAggressiveBull };
   
   const shares = Math.floor(maxRisk / riskPerShare);
-  return { shares: Math.max(1, shares), riskPercent };
+  return { shares: Math.max(1, shares), riskPercent, isAggressiveBull };
 }
 
 // Execute trade with bracket order (stocks)
@@ -680,12 +686,15 @@ async function runTradingCycle(supabase: any): Promise<{ results: any[], skipped
         ? marketData.price + (2 * orbHeight)
         : marketData.price - (2 * orbHeight);
       
-      const { shares, riskPercent } = calculatePositionSize(
+      const spyAboveSMA = regimeData.spyPrice > regimeData.sma200;
+      const { shares, riskPercent, isAggressiveBull } = calculatePositionSize(
         accountInfo.equity,
         marketData.price,
         stopLoss,
         rank,
-        regimeData.vixLevel
+        regimeData.vixLevel,
+        regimeData.regime,
+        spyAboveSMA
       );
       
       if (shares <= 0) {

@@ -10,6 +10,7 @@ interface RulesCardProps {
   marketRegime?: 'bull' | 'elevated_vol' | 'bear';
   spyPrice?: number;
   spy200SMA?: number;
+  isAggressiveBull?: boolean;
 }
 
 const regimeConfig = {
@@ -38,12 +39,15 @@ export function RulesCard({
   marketRegime = 'bull',
   spyPrice = 0,
   spy200SMA = 0,
+  isAggressiveBull = false,
 }: RulesCardProps) {
   const maxTradesHit = tradesToday >= MAX_GROWTH_CONFIG.MAX_TRADES_PER_DAY;
   const dailyLossHit = dailyPnLPercent <= -(MAX_GROWTH_CONFIG.MAX_DAILY_LOSS_PERCENT * 100);
-  const vixDoubleSize = vixLevel < MAX_GROWTH_CONFIG.VIX_DOUBLE_SIZE;
   const regime = regimeConfig[marketRegime] || regimeConfig.bull;
   const longsAllowed = marketRegime === 'bull';
+  
+  // Aggressive Bull Mode: SPY > 200-SMA AND VIX ≤ 18
+  const showAggressiveBull = isAggressiveBull || (spyPrice > spy200SMA && vixLevel <= MAX_GROWTH_CONFIG.VIX_DOUBLE_SIZE);
 
   return (
     <div className="bg-card border border-border rounded-xl p-4 space-y-4">
@@ -102,15 +106,15 @@ export function RulesCard({
           </span>
           <span className={cn(
             "font-mono font-bold",
-            vixLevel > 25 ? 'text-red-400' : vixDoubleSize ? 'text-emerald-400' : 'text-muted-foreground'
+            vixLevel > 25 ? 'text-red-400' : vixLevel <= 18 ? 'text-emerald-400' : 'text-muted-foreground'
           )}>
             {vixLevel.toFixed(1)}
           </span>
         </div>
-        {vixDoubleSize && marketRegime === 'bull' && (
-          <div className="flex items-center gap-2 text-xs text-emerald-400 bg-emerald-400/10 rounded px-2 py-1">
+        {showAggressiveBull && (
+          <div className="flex items-center gap-2 text-xs text-amber-300 bg-amber-400/15 rounded px-2 py-1 border border-amber-500/30">
             <TrendingUp className="h-3 w-3" />
-            VIX &lt;18 → 2x SIZE on #1
+            <span className="font-semibold">Aggressive Bull Mode – 3% risk on #1</span>
           </div>
         )}
       </div>
