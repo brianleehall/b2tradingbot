@@ -118,7 +118,7 @@ export function RulesCard({
       {/* Core Rules */}
       <div className="space-y-2 text-sm">
         <div className="flex items-center justify-between">
-          <span className="text-muted-foreground">Tiered sizing (#1=2%, #2-4=1%)</span>
+          <span className="text-muted-foreground">Risk: 1–3% tiered (2–3% #1 in bull)</span>
           <CheckCircle className="h-4 w-4 text-emerald-400" />
         </div>
         
