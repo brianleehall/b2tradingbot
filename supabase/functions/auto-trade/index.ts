@@ -36,6 +36,10 @@ const CONFIG = {
   MAX_TRADES_PER_DAY: 3,
   MAX_DAILY_LOSS_PERCENT: 0.03, // -3% daily stop
   
+  // Crypto allocation
+  CRYPTO_MAX_PORTFOLIO_PERCENT: 0.20, // Max 20% of portfolio for crypto
+  CRYPTO_RISK_PER_TRADE: 0.005,       // 0.5% risk per crypto trade
+  
   // Filters
   VIX_SHORTS_ONLY_THRESHOLD: 25,
   VIX_DOUBLE_SIZE_THRESHOLD: 18,
@@ -341,7 +345,7 @@ function calculatePositionSize(
   return { shares: Math.max(1, shares), riskPercent };
 }
 
-// Execute trade with bracket order
+// Execute trade with bracket order (stocks)
 async function executeTrade(
   ticker: string,
   side: 'buy' | 'sell',
@@ -384,6 +388,106 @@ async function executeTrade(
   } catch (error) {
     return { success: false, error: String(error) };
   }
+}
+
+// Execute crypto trade via Alpaca crypto API
+async function executeCryptoTrade(
+  symbol: string,
+  side: 'buy' | 'sell',
+  notional: number,
+  stopLoss: number,
+  target: number,
+  apiKeyId: string,
+  secretKey: string,
+  isPaper: boolean
+): Promise<{ success: boolean; orderId?: string; error?: string }> {
+  const baseUrl = isPaper ? 'https://paper-api.alpaca.markets' : 'https://api.alpaca.markets';
+  
+  try {
+    // Alpaca uses /BTC/USD format for crypto
+    const alpacaSymbol = symbol.replace('USD', '/USD');
+    
+    const response = await fetch(`${baseUrl}/v2/orders`, {
+      method: 'POST',
+      headers: {
+        'APCA-API-KEY-ID': apiKeyId,
+        'APCA-API-SECRET-KEY': secretKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        symbol: alpacaSymbol,
+        notional: notional.toFixed(2),
+        side,
+        type: 'market',
+        time_in_force: 'gtc', // Crypto uses GTC
+      }),
+    });
+    
+    if (!response.ok) {
+      const error = await response.text();
+      return { success: false, error };
+    }
+    
+    const order = await response.json();
+    console.log(`[CRYPTO] Executed ${side} ${alpacaSymbol} for $${notional.toFixed(2)}`);
+    return { success: true, orderId: order.id };
+  } catch (error) {
+    return { success: false, error: String(error) };
+  }
+}
+
+// Get crypto market data from Alpaca
+async function getCryptoMarketData(symbol: string, apiKeyId: string, secretKey: string): Promise<{
+  price: number;
+  volume: number;
+  avgVolume: number;
+} | null> {
+  try {
+    const alpacaSymbol = symbol.replace('USD', '/USD');
+    
+    const tradeResponse = await fetch(
+      `https://data.alpaca.markets/v1beta3/crypto/us/latest/trades?symbols=${alpacaSymbol}`,
+      {
+        headers: {
+          'APCA-API-KEY-ID': apiKeyId,
+          'APCA-API-SECRET-KEY': secretKey,
+        },
+      }
+    );
+    
+    if (!tradeResponse.ok) return null;
+    
+    const tradeData = await tradeResponse.json();
+    const trade = tradeData.trades?.[alpacaSymbol];
+    const price = trade?.p || 0;
+    
+    return { price, volume: 0, avgVolume: 0 };
+  } catch {
+    return null;
+  }
+}
+
+// Calculate crypto position size (notional value)
+function calculateCryptoPositionSize(
+  equity: number,
+  entryPrice: number,
+  stopLoss: number
+): { notional: number; riskPercent: number } {
+  const maxCryptoAllocation = equity * CONFIG.CRYPTO_MAX_PORTFOLIO_PERCENT;
+  const riskPercent = CONFIG.CRYPTO_RISK_PER_TRADE;
+  const maxRisk = equity * riskPercent;
+  
+  const riskPerUnit = Math.abs(entryPrice - stopLoss) / entryPrice;
+  
+  if (riskPerUnit <= 0) return { notional: 0, riskPercent };
+  
+  // Calculate notional based on risk
+  let notional = maxRisk / riskPerUnit;
+  
+  // Cap at max crypto allocation
+  notional = Math.min(notional, maxCryptoAllocation);
+  
+  return { notional: Math.max(100, notional), riskPercent };
 }
 
 // Get account info (equity, trades today, daily P&L)
