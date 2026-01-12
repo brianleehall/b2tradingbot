@@ -66,7 +66,7 @@ const STOCK_FLOAT: Record<string, number> = {
 
 // Stricter criteria as specified
 const CRITERIA = {
-  MIN_RVOL: 2.5,
+  MIN_RVOL: 2.25,
   MIN_CHANGE_PCT: 3.5,
   MIN_AVG_VOLUME: 800000,
   MIN_PRICE: 20,  // Strict: close >= $20
