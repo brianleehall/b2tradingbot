@@ -16,6 +16,15 @@ interface TradingConfig {
   auto_trading_enabled: boolean;
 }
 
+interface Position {
+  symbol: string;
+  qty: string;
+  side: string;
+  avg_entry_price: string;
+  unrealized_pl: string;
+  asset_class?: string;
+}
+
 // =====================
 // MAX-GROWTH CONFIGURATION
 // =====================
@@ -29,6 +38,7 @@ const CONFIG = {
   EXTENDED_END: 11 * 60 + 30,  // 11:30 AM max
   REENTRY_START: 9 * 60 + 50,  // 9:50 AM
   REENTRY_END: 10 * 60 + 5,    // 10:05 AM
+  EOD_FLATTEN: 16 * 60,        // 4:00 PM - Force flatten all positions
   
   // Risk management
   TIER1_RISK: 0.02,            // 2% for #1 ranked stock (default)
@@ -52,19 +62,54 @@ const CONFIG = {
   MIN_VOLUME_RATIO: 1.5,
 };
 
-function getETTimeInfo(): { minutes: number; hours: number; mins: number; date: Date } {
+// Proper timezone handling using Intl API
+function getETTimeInfo(): { minutes: number; hours: number; mins: number; date: Date; dayOfWeek: number } {
   const now = new Date();
+  // Use proper timezone conversion
+  const etFormatter = new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/New_York',
+    hour: 'numeric',
+    minute: 'numeric',
+    hour12: false,
+    weekday: 'short',
+  });
+  
+  const parts = etFormatter.formatToParts(now);
+  const hours = parseInt(parts.find(p => p.type === 'hour')?.value || '0');
+  const mins = parseInt(parts.find(p => p.type === 'minute')?.value || '0');
+  const weekday = parts.find(p => p.type === 'weekday')?.value || '';
+  
+  // Map weekday to number (0=Sun, 1=Mon, ... 6=Sat)
+  const dayMap: Record<string, number> = { 'Sun': 0, 'Mon': 1, 'Tue': 2, 'Wed': 3, 'Thu': 4, 'Fri': 5, 'Sat': 6 };
+  const dayOfWeek = dayMap[weekday] ?? new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' })).getDay();
+  
   const etDate = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
-  const hours = etDate.getHours();
-  const mins = etDate.getMinutes();
-  return { minutes: hours * 60 + mins, hours, mins, date: etDate };
+  
+  return { minutes: hours * 60 + mins, hours, mins, date: etDate, dayOfWeek };
 }
 
 function isWithinTradingWindow(): boolean {
-  const { minutes, date } = getETTimeInfo();
-  const day = date.getDay();
-  if (day === 0 || day === 6) return false;
+  const { minutes, dayOfWeek } = getETTimeInfo();
+  if (dayOfWeek === 0 || dayOfWeek === 6) return false; // Weekend
   return minutes >= CONFIG.TRADING_START && minutes <= CONFIG.TRADING_END;
+}
+
+function isMarketHours(): boolean {
+  const { minutes, dayOfWeek } = getETTimeInfo();
+  if (dayOfWeek === 0 || dayOfWeek === 6) return false; // Weekend
+  return minutes >= CONFIG.ORB_START && minutes < CONFIG.EOD_FLATTEN;
+}
+
+function shouldFlattenEOD(): boolean {
+  const { minutes, dayOfWeek } = getETTimeInfo();
+  if (dayOfWeek === 0 || dayOfWeek === 6) return false;
+  return minutes >= CONFIG.EOD_FLATTEN;
+}
+
+function shouldCheckDynamicFlatten(): boolean {
+  const { minutes, dayOfWeek } = getETTimeInfo();
+  if (dayOfWeek === 0 || dayOfWeek === 6) return false;
+  return minutes >= CONFIG.FIRST_FLATTEN;
 }
 
 // Get combined market regime (SPY 200-SMA + VIX)
@@ -545,6 +590,257 @@ async function getAccountInfo(apiKeyId: string, secretKey: string, isPaper: bool
   }
 }
 
+// Get all open positions
+async function getOpenPositions(apiKeyId: string, secretKey: string, isPaper: boolean): Promise<Position[]> {
+  const baseUrl = isPaper ? 'https://paper-api.alpaca.markets' : 'https://api.alpaca.markets';
+  
+  try {
+    const response = await fetch(`${baseUrl}/v2/positions`, {
+      headers: {
+        'APCA-API-KEY-ID': apiKeyId,
+        'APCA-API-SECRET-KEY': secretKey,
+      },
+    });
+    
+    if (!response.ok) return [];
+    return await response.json();
+  } catch {
+    return [];
+  }
+}
+
+// Close a single position (market sell)
+async function closePosition(
+  symbol: string,
+  apiKeyId: string,
+  secretKey: string,
+  isPaper: boolean
+): Promise<{ success: boolean; error?: string }> {
+  const baseUrl = isPaper ? 'https://paper-api.alpaca.markets' : 'https://api.alpaca.markets';
+  
+  try {
+    const response = await fetch(`${baseUrl}/v2/positions/${symbol}`, {
+      method: 'DELETE',
+      headers: {
+        'APCA-API-KEY-ID': apiKeyId,
+        'APCA-API-SECRET-KEY': secretKey,
+      },
+    });
+    
+    if (!response.ok) {
+      const error = await response.text();
+      return { success: false, error };
+    }
+    
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: String(error) };
+  }
+}
+
+// Cancel all open orders
+async function cancelAllOrders(apiKeyId: string, secretKey: string, isPaper: boolean): Promise<boolean> {
+  const baseUrl = isPaper ? 'https://paper-api.alpaca.markets' : 'https://api.alpaca.markets';
+  
+  try {
+    const response = await fetch(`${baseUrl}/v2/orders`, {
+      method: 'DELETE',
+      headers: {
+        'APCA-API-KEY-ID': apiKeyId,
+        'APCA-API-SECRET-KEY': secretKey,
+      },
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+// Log flatten event to Supabase
+async function logFlattenEvent(
+  supabase: any,
+  userId: string,
+  symbol: string,
+  reason: string,
+  qty: number,
+  entryPrice: number,
+  exitPrice: number,
+  pnl: number
+): Promise<void> {
+  try {
+    await supabase.from('trade_logs').insert({
+      user_id: userId,
+      symbol,
+      side: 'flatten',
+      qty,
+      price: exitPrice,
+      strategy: 'orb-max-growth',
+      status: 'flattened',
+      error_message: reason,
+      notes: JSON.stringify({
+        reason,
+        entryPrice,
+        exitPrice,
+        pnl,
+        timestamp: new Date().toISOString(),
+      }),
+    });
+    console.log(`[FLATTEN-LOG] ${symbol}: ${reason} | P&L: $${pnl.toFixed(2)}`);
+  } catch (error) {
+    console.error('Failed to log flatten event:', error);
+  }
+}
+
+// Calculate R-multiple for a position
+function calculateRMultiple(entryPrice: number, currentPrice: number, orbRange: { high: number; low: number }, side: 'long' | 'short'): number {
+  const riskPerShare = Math.abs(orbRange.high - orbRange.low);
+  if (riskPerShare === 0) return 0;
+  
+  const profitPerShare = side === 'long' 
+    ? currentPrice - entryPrice 
+    : entryPrice - currentPrice;
+  
+  return profitPerShare / riskPerShare;
+}
+
+// Run auto-flatten check for all users
+async function runAutoFlatten(supabase: any, reason: string): Promise<{ flattened: number; errors: number }> {
+  console.log(`\n=== AUTO-FLATTEN: ${reason} ===`);
+  
+  // Get all active trading configs
+  const { data: configs, error } = await supabase.rpc('get_active_trading_configs');
+  
+  if (error || !configs || configs.length === 0) {
+    console.log('No active trading configs found');
+    return { flattened: 0, errors: 0 };
+  }
+  
+  let flattened = 0;
+  let errors = 0;
+  
+  for (const config of configs as TradingConfig[]) {
+    console.log(`\n--- Processing user ${config.user_id} ---`);
+    
+    // Cancel all open orders first
+    await cancelAllOrders(config.api_key_id, config.secret_key, config.is_paper_trading);
+    
+    // Get all open positions
+    const positions = await getOpenPositions(config.api_key_id, config.secret_key, config.is_paper_trading);
+    
+    if (positions.length === 0) {
+      console.log('No open positions');
+      continue;
+    }
+    
+    console.log(`Found ${positions.length} open positions`);
+    
+    for (const position of positions) {
+      const symbol = position.symbol;
+      const qty = Math.abs(parseFloat(position.qty));
+      const entryPrice = parseFloat(position.avg_entry_price);
+      const unrealizedPnL = parseFloat(position.unrealized_pl);
+      
+      // Get current price for logging
+      const marketData = await getMarketData(symbol, config.api_key_id, config.secret_key);
+      const exitPrice = marketData?.price || entryPrice;
+      
+      console.log(`[${symbol}] Closing ${qty} shares @ ~$${exitPrice.toFixed(2)} | P&L: $${unrealizedPnL.toFixed(2)}`);
+      
+      const result = await closePosition(symbol, config.api_key_id, config.secret_key, config.is_paper_trading);
+      
+      if (result.success) {
+        flattened++;
+        await logFlattenEvent(
+          supabase,
+          config.user_id,
+          symbol,
+          reason,
+          qty,
+          entryPrice,
+          exitPrice,
+          unrealizedPnL
+        );
+      } else {
+        errors++;
+        console.error(`[${symbol}] Failed to close: ${result.error}`);
+      }
+    }
+  }
+  
+  console.log(`\n=== FLATTEN COMPLETE: ${flattened} closed, ${errors} errors ===`);
+  return { flattened, errors };
+}
+
+// Run dynamic flatten check (10:15 AM rule with +1.5R extension)
+async function runDynamicFlatten(supabase: any): Promise<{ flattened: number; extended: number }> {
+  const timeInfo = getETTimeInfo();
+  console.log(`\n=== DYNAMIC FLATTEN CHECK at ${timeInfo.hours}:${timeInfo.mins.toString().padStart(2, '0')} ET ===`);
+  
+  // Only run after 10:15 AM ET
+  if (timeInfo.minutes < CONFIG.FIRST_FLATTEN) {
+    return { flattened: 0, extended: 0 };
+  }
+  
+  // If past 11:30 AM, force flatten everything
+  if (timeInfo.minutes >= CONFIG.EXTENDED_END) {
+    const result = await runAutoFlatten(supabase, 'Extended session end (11:30 AM ET)');
+    return { flattened: result.flattened, extended: 0 };
+  }
+  
+  const { data: configs, error } = await supabase.rpc('get_active_trading_configs');
+  
+  if (error || !configs || configs.length === 0) {
+    return { flattened: 0, extended: 0 };
+  }
+  
+  let flattened = 0;
+  let extended = 0;
+  
+  for (const config of configs as TradingConfig[]) {
+    const positions = await getOpenPositions(config.api_key_id, config.secret_key, config.is_paper_trading);
+    
+    if (positions.length === 0) continue;
+    
+    for (const position of positions) {
+      const symbol = position.symbol;
+      const qty = Math.abs(parseFloat(position.qty));
+      const entryPrice = parseFloat(position.avg_entry_price);
+      const unrealizedPnL = parseFloat(position.unrealized_pl);
+      const side = parseFloat(position.qty) > 0 ? 'long' : 'short';
+      
+      // Get ORB range to calculate R-multiple
+      const orbRange = await getORBRange(symbol, config.api_key_id, config.secret_key);
+      const marketData = await getMarketData(symbol, config.api_key_id, config.secret_key);
+      
+      if (!orbRange || !marketData) {
+        // Can't calculate R, flatten to be safe
+        await closePosition(symbol, config.api_key_id, config.secret_key, config.is_paper_trading);
+        await logFlattenEvent(supabase, config.user_id, symbol, 'Dynamic stop (no ORB data)', qty, entryPrice, marketData?.price || entryPrice, unrealizedPnL);
+        flattened++;
+        continue;
+      }
+      
+      const rMultiple = calculateRMultiple(entryPrice, marketData.price, orbRange, side as 'long' | 'short');
+      
+      console.log(`[${symbol}] R-Multiple: ${rMultiple.toFixed(2)}R | P&L: $${unrealizedPnL.toFixed(2)}`);
+      
+      // If position is +1.5R or better, allow extension to 11:30 AM
+      if (rMultiple >= CONFIG.PROFIT_EXTENSION_R) {
+        console.log(`[${symbol}] +${rMultiple.toFixed(2)}R ≥ 1.5R → Session extended to 11:30 AM`);
+        extended++;
+        // TODO: Could implement trailing stop to 9 EMA here
+      } else if (timeInfo.minutes >= CONFIG.FIRST_FLATTEN + 15) {
+        // After 10:30 AM, flatten positions not meeting threshold
+        await closePosition(symbol, config.api_key_id, config.secret_key, config.is_paper_trading);
+        await logFlattenEvent(supabase, config.user_id, symbol, `Dynamic stop at ${timeInfo.hours}:${timeInfo.mins.toString().padStart(2, '0')} ET (${rMultiple.toFixed(2)}R < 1.5R)`, qty, entryPrice, marketData.price, unrealizedPnL);
+        flattened++;
+      }
+    }
+  }
+  
+  return { flattened, extended };
+}
+
 // Core trading logic extracted for reuse
 async function runTradingCycle(supabase: any): Promise<{ results: any[], skipped: boolean, reason?: string }> {
   const timeInfo = getETTimeInfo();
@@ -759,15 +1055,61 @@ serve(async (req) => {
   }
 
   const timeInfo = getETTimeInfo();
-  console.log(`[AUTO-TRADE] Triggered at ${timeInfo.hours}:${timeInfo.mins.toString().padStart(2, '0')} ET`);
+  console.log(`[AUTO-TRADE] Triggered at ${timeInfo.hours}:${timeInfo.mins.toString().padStart(2, '0')} ET (${timeInfo.dayOfWeek === 0 ? 'Sun' : timeInfo.dayOfWeek === 6 ? 'Sat' : 'Weekday'})`);
 
-  // Check for test mode
+  // Check for test mode or special commands
   let testMode = false;
+  let forceEODFlatten = false;
+  let simulateTime: number | null = null;
+  
   try {
     const body = await req.json();
     testMode = body?.test === true;
+    forceEODFlatten = body?.forceEODFlatten === true;
+    simulateTime = body?.simulateTimeMinutes || null;
   } catch {
     // No body or invalid JSON, continue normally
+  }
+
+  // For testing: simulate a specific time
+  if (simulateTime !== null) {
+    console.log(`\n=== SIMULATING TIME: ${Math.floor(simulateTime / 60)}:${(simulateTime % 60).toString().padStart(2, '0')} ET ===`);
+  }
+
+  const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
+  const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+  const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+  // Force EOD flatten (for testing or manual trigger)
+  if (forceEODFlatten) {
+    console.log('\n=== FORCED EOD FLATTEN ===');
+    const result = await runAutoFlatten(supabase, 'Manual EOD flatten trigger');
+    return new Response(
+      JSON.stringify({ 
+        action: 'eod_flatten',
+        flattened: result.flattened, 
+        errors: result.errors,
+        timeET: `${timeInfo.hours}:${timeInfo.mins.toString().padStart(2, '0')}` 
+      }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
+  }
+
+  // Check for 4:00 PM EOD flatten
+  const effectiveTime = simulateTime !== null ? simulateTime : timeInfo.minutes;
+  if (effectiveTime >= CONFIG.EOD_FLATTEN && timeInfo.dayOfWeek !== 0 && timeInfo.dayOfWeek !== 6) {
+    console.log('\n=== 4:00 PM ET - END OF DAY FLATTEN ===');
+    const result = await runAutoFlatten(supabase, 'End of day flatten (4:00 PM ET)');
+    return new Response(
+      JSON.stringify({ 
+        action: 'eod_flatten',
+        reason: 'End of day - no overnight positions',
+        flattened: result.flattened, 
+        errors: result.errors,
+        timeET: `${timeInfo.hours}:${timeInfo.mins.toString().padStart(2, '0')}` 
+      }),
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
+    );
   }
 
   // Test mode: simulate aggressive bull conditions
@@ -838,6 +1180,14 @@ serve(async (req) => {
     );
   }
 
+  // Check for dynamic flatten (10:15 AM rule)
+  if (shouldCheckDynamicFlatten()) {
+    const dynamicResult = await runDynamicFlatten(supabase);
+    if (dynamicResult.flattened > 0) {
+      console.log(`Dynamic flatten: ${dynamicResult.flattened} positions closed, ${dynamicResult.extended} extended`);
+    }
+  }
+
   // Quick check if we're outside trading window entirely
   if (!isWithinTradingWindow()) {
     console.log('Outside ORB trading window (9:29-10:30 AM ET)');
@@ -848,10 +1198,6 @@ serve(async (req) => {
   }
 
   try {
-    const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
-    const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
-    const supabase = createClient(supabaseUrl, supabaseServiceKey);
-
     // Run first trading cycle immediately
     console.log('\n=== CYCLE 1 (0s) ===');
     const cycle1 = await runTradingCycle(supabase);
