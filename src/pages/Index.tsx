@@ -20,7 +20,7 @@ import { useAlpacaData } from '@/hooks/useAlpacaData';
 import { storage } from '@/lib/storage';
 import { AlpacaCredentials } from '@/lib/types';
 import { mockPrices, strategies } from '@/lib/mockData';
-import { defaultRiskSettings, RiskSettings } from '@/lib/dayTradingStrategies';
+import { defaultRiskSettings, RiskSettings, getTodayET, shouldResetLock } from '@/lib/dayTradingStrategies';
 import { toast } from '@/hooks/use-toast';
 import { Loader2 } from 'lucide-react';
 
@@ -80,8 +80,32 @@ const Index = () => {
 
   // Check if daily loss limit reached
   useEffect(() => {
-    if (dailyPnLPercent < -riskSettings.dailyLossLimit) {
-      setRiskSettings(prev => ({ ...prev, isLocked: true }));
+    // First check if we need to reset the lock for a new trading day
+    if (riskSettings.isLocked && shouldResetLock(riskSettings)) {
+      console.log('[LOCK-RESET] New trading day detected, resetting daily loss lock');
+      setRiskSettings(prev => ({ 
+        ...prev, 
+        isLocked: false, 
+        manualStop: false,
+        lockDate: null,
+        tradesToday: 0 // Reset trades count for new day
+      }));
+      toast({
+        title: "New Trading Day",
+        description: "Daily loss lock has been reset. Ready to trade!",
+      });
+      return;
+    }
+
+    // Then check if we need to lock due to daily loss limit
+    if (!riskSettings.isLocked && dailyPnLPercent < -riskSettings.dailyLossLimit) {
+      const today = getTodayET();
+      setRiskSettings(prev => ({ 
+        ...prev, 
+        isLocked: true, 
+        manualStop: false, // Not a manual stop
+        lockDate: today 
+      }));
       if (config?.autoTradingEnabled) {
         toggleAutoTrading(false);
         toast({
@@ -91,7 +115,7 @@ const Index = () => {
         });
       }
     }
-  }, [dailyPnLPercent, riskSettings.dailyLossLimit]);
+  }, [dailyPnLPercent, riskSettings.dailyLossLimit, riskSettings.isLocked, riskSettings.lockDate, riskSettings.manualStop]);
 
   useEffect(() => {
     if (!authLoading && !isAuthenticated) {
@@ -135,6 +159,16 @@ const Index = () => {
 
   const handleToggleAutoTrading = async (enabled: boolean) => {
     await toggleAutoTrading(enabled);
+  };
+
+  const handleManualStop = () => {
+    const today = getTodayET();
+    setRiskSettings(prev => ({ 
+      ...prev, 
+      manualStop: true,
+      lockDate: today
+    }));
+    console.log('[MANUAL-STOP] User manually stopped trading');
   };
 
   const handleTutorialComplete = () => {
@@ -194,6 +228,7 @@ const Index = () => {
           <AutoTradingControlCard
             isEnabled={config?.autoTradingEnabled ?? false}
             onToggle={handleToggleAutoTrading}
+            onManualStop={handleManualStop}
             selectedStrategy={config?.selectedStrategy ?? 'orb-5min'}
             isConnected={isConnected}
             tradesToday={riskSettings.tradesToday}

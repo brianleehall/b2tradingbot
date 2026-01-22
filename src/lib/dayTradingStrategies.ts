@@ -22,6 +22,8 @@ export interface RiskSettings {
   tradesToday: number;
   dailyPnL: number;
   isLocked: boolean;
+  manualStop: boolean;     // true if user manually stopped trading
+  lockDate: string | null; // ISO date string when lock was set
 }
 
 export interface GapStock {
@@ -78,8 +80,30 @@ export const defaultRiskSettings: RiskSettings = {
   dailyLossLimit: 3.0, // 3%
   tradesToday: 0,
   dailyPnL: 0,
-  isLocked: false
+  isLocked: false,
+  manualStop: false,
+  lockDate: null
 };
+
+// Get today's date in ET timezone as ISO string (YYYY-MM-DD)
+export function getTodayET(): string {
+  const now = new Date();
+  const et = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  return et.toISOString().split('T')[0];
+}
+
+// Check if lock should be reset for a new trading day
+export function shouldResetLock(riskSettings: RiskSettings): boolean {
+  // Never reset if manual stop was used
+  if (riskSettings.manualStop) return false;
+  
+  // If no lock date, nothing to reset
+  if (!riskSettings.lockDate) return false;
+  
+  // Reset if lock was set on a different day
+  const today = getTodayET();
+  return riskSettings.lockDate !== today;
+}
 
 export function calculatePositionSize(
   accountEquity: number,

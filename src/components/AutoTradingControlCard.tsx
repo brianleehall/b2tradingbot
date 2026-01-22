@@ -9,6 +9,7 @@ import { getMarketStatus } from '@/lib/dayTradingStrategies';
 interface AutoTradingControlCardProps {
   isEnabled: boolean;
   onToggle: (enabled: boolean) => void;
+  onManualStop?: () => void; // Called when user manually stops trading
   selectedStrategy: string | null;
   isConnected: boolean;
   tradesToday: number;
@@ -18,7 +19,8 @@ interface AutoTradingControlCardProps {
 
 export function AutoTradingControlCard({ 
   isEnabled, 
-  onToggle, 
+  onToggle,
+  onManualStop,
   selectedStrategy, 
   isConnected,
   tradesToday,
@@ -94,9 +96,10 @@ export function AutoTradingControlCard({
 
   const handleStop = () => {
     onToggle(false);
+    onManualStop?.(); // Notify parent about manual stop
     toast({
       title: "Auto-Trading Stopped",
-      description: "Bot has been stopped.",
+      description: "Bot has been manually stopped. Will remain stopped until you click START again.",
     });
   };
 
