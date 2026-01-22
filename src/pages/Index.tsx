@@ -228,7 +228,7 @@ const Index = () => {
 
         {/* Positions & Orders */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <PositionsCard positions={positions} isLoading={dataLoading} />
+          <PositionsCard positions={positions} isLoading={dataLoading} onRefresh={refetch} />
           <OrdersCard orders={orders} isLoading={dataLoading} />
         </div>
       </main>
