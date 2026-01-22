@@ -2,7 +2,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Order } from '@/lib/types';
 import { cn } from '@/lib/utils';
 import { History, ArrowUpCircle, ArrowDownCircle, Loader2 } from 'lucide-react';
-import { formatDistanceToNow } from 'date-fns';
+import { format } from 'date-fns';
 
 interface OrdersCardProps {
   orders: Order[];
@@ -68,7 +68,7 @@ export function OrdersCard({ orders, isLoading }: OrdersCardProps) {
                     {order.status}
                   </span>
                   <p className="text-xs text-muted-foreground mt-1">
-                    {formatDistanceToNow(new Date(order.createdAt), { addSuffix: true })}
+                    {format(new Date(order.createdAt), 'MM/dd HH:mm:ss')}
                   </p>
                 </div>
               </div>
