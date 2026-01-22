@@ -707,8 +707,16 @@ function calculateRMultiple(entryPrice: number, currentPrice: number, orbRange: 
 async function runAutoFlatten(supabase: any, reason: string): Promise<{ flattened: number; errors: number }> {
   console.log(`\n=== AUTO-FLATTEN: ${reason} ===`);
   
+  // Allow safe simulation/testing without needing real user configs.
+  // NOTE: In normal operation we always load configs from the database.
+  const configsOverride = (supabase as any)?.__configsOverride as TradingConfig[] | undefined;
+  const positionsOverrideByUser = (supabase as any)?.__positionsOverrideByUser as Record<string, Position[]> | undefined;
+  const simulateCloseOnly = Boolean((supabase as any)?.__simulateCloseOnly);
+
   // Get all active trading configs
-  const { data: configs, error } = await supabase.rpc('get_active_trading_configs');
+  const { data: configs, error } = configsOverride
+    ? ({ data: configsOverride, error: null } as any)
+    : await supabase.rpc('get_active_trading_configs');
   
   if (error || !configs || configs.length === 0) {
     console.log('No active trading configs found');
@@ -722,10 +730,14 @@ async function runAutoFlatten(supabase: any, reason: string): Promise<{ flattene
     console.log(`\n--- Processing user ${config.user_id} ---`);
     
     // Cancel all open orders first
-    await cancelAllOrders(config.api_key_id, config.secret_key, config.is_paper_trading);
+    if (!simulateCloseOnly) {
+      await cancelAllOrders(config.api_key_id, config.secret_key, config.is_paper_trading);
+    }
     
     // Get all open positions
-    const positions = await getOpenPositions(config.api_key_id, config.secret_key, config.is_paper_trading);
+    const positions = positionsOverrideByUser?.[config.user_id]
+      ? positionsOverrideByUser[config.user_id]
+      : await getOpenPositions(config.api_key_id, config.secret_key, config.is_paper_trading);
     
     if (positions.length === 0) {
       console.log('No open positions');
@@ -741,12 +753,16 @@ async function runAutoFlatten(supabase: any, reason: string): Promise<{ flattene
       const unrealizedPnL = parseFloat(position.unrealized_pl);
       
       // Get current price for logging
-      const marketData = await getMarketData(symbol, config.api_key_id, config.secret_key);
+      const marketData = simulateCloseOnly
+        ? null
+        : await getMarketData(symbol, config.api_key_id, config.secret_key);
       const exitPrice = marketData?.price || entryPrice;
       
       console.log(`[${symbol}] Closing ${qty} shares @ ~$${exitPrice.toFixed(2)} | P&L: $${unrealizedPnL.toFixed(2)}`);
       
-      const result = await closePosition(symbol, config.api_key_id, config.secret_key, config.is_paper_trading);
+      const result = simulateCloseOnly
+        ? ({ success: true } as const)
+        : await closePosition(symbol, config.api_key_id, config.secret_key, config.is_paper_trading);
       
       if (result.success) {
         flattened++;
@@ -1061,12 +1077,14 @@ serve(async (req) => {
   let testMode = false;
   let forceEODFlatten = false;
   let simulateTime: number | null = null;
+  let testEodFlatten = false;
   
   try {
     const body = await req.json();
     testMode = body?.test === true;
     forceEODFlatten = body?.forceEODFlatten === true;
     simulateTime = body?.simulateTimeMinutes || null;
+    testEodFlatten = body?.testEodFlatten === true;
   } catch {
     // No body or invalid JSON, continue normally
   }
@@ -1099,11 +1117,40 @@ serve(async (req) => {
   const effectiveTime = simulateTime !== null ? simulateTime : timeInfo.minutes;
   if (effectiveTime >= CONFIG.EOD_FLATTEN && timeInfo.dayOfWeek !== 0 && timeInfo.dayOfWeek !== 6) {
     console.log('\n=== 4:00 PM ET - END OF DAY FLATTEN ===');
-    const result = await runAutoFlatten(supabase, 'End of day flatten (4:00 PM ET)');
+
+    // Optional safe test hook: simulate one open position at/after EOD without touching Alpaca.
+    if (testEodFlatten) {
+      console.log('[EOD-TEST] Running simulated EOD flatten (no Alpaca calls)');
+      (supabase as any).__simulateCloseOnly = true;
+      (supabase as any).__configsOverride = [
+        {
+          id: 'test-config',
+          user_id: 'test-user',
+          api_key_id: 'test',
+          secret_key: 'test',
+          is_paper_trading: true,
+          selected_strategy: 'orb-max-growth',
+          auto_trading_enabled: true,
+        } satisfies TradingConfig,
+      ];
+      (supabase as any).__positionsOverrideByUser = {
+        'test-user': [
+          {
+            symbol: 'AAPL',
+            qty: '10',
+            side: 'long',
+            avg_entry_price: '100',
+            unrealized_pl: '25',
+          } satisfies Position,
+        ],
+      };
+    }
+
+    const result = await runAutoFlatten(supabase, 'End-of-day flatten');
     return new Response(
       JSON.stringify({ 
         action: 'eod_flatten',
-        reason: 'End of day - no overnight positions',
+        reason: 'End-of-day flatten',
         flattened: result.flattened, 
         errors: result.errors,
         timeET: `${timeInfo.hours}:${timeInfo.mins.toString().padStart(2, '0')}` 
