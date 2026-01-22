@@ -62,10 +62,10 @@ const CONFIG = {
   MIN_VOLUME_RATIO: 1.5,
 };
 
-// Proper timezone handling using Intl API
-function getETTimeInfo(): { minutes: number; hours: number; mins: number; date: Date; dayOfWeek: number } {
+// Proper timezone handling using Intl API with America/New_York
+function getETTimeInfo(): { minutes: number; hours: number; mins: number; date: Date; dayOfWeek: number; timeString: string } {
   const now = new Date();
-  // Use proper timezone conversion
+  // Use proper timezone conversion with America/New_York
   const etFormatter = new Intl.DateTimeFormat('en-US', {
     timeZone: 'America/New_York',
     hour: 'numeric',
@@ -84,32 +84,45 @@ function getETTimeInfo(): { minutes: number; hours: number; mins: number; date: 
   const dayOfWeek = dayMap[weekday] ?? new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' })).getDay();
   
   const etDate = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
+  const timeString = `${hours.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}`;
   
-  return { minutes: hours * 60 + mins, hours, mins, date: etDate, dayOfWeek };
+  return { minutes: hours * 60 + mins, hours, mins, date: etDate, dayOfWeek, timeString };
 }
 
 function isWithinTradingWindow(): boolean {
-  const { minutes, dayOfWeek } = getETTimeInfo();
-  if (dayOfWeek === 0 || dayOfWeek === 6) return false; // Weekend
-  return minutes >= CONFIG.TRADING_START && minutes <= CONFIG.TRADING_END;
+  const { minutes, dayOfWeek, timeString } = getETTimeInfo();
+  const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+  const inWindow = minutes >= CONFIG.TRADING_START && minutes <= CONFIG.TRADING_END;
+  console.log(`[TIME-CHECK] ${timeString} ET - Trading window: ${inWindow ? 'YES' : 'NO'} (9:29-10:30 AM ET)${isWeekend ? ' [WEEKEND]' : ''}`);
+  if (isWeekend) return false;
+  return inWindow;
 }
 
 function isMarketHours(): boolean {
-  const { minutes, dayOfWeek } = getETTimeInfo();
-  if (dayOfWeek === 0 || dayOfWeek === 6) return false; // Weekend
-  return minutes >= CONFIG.ORB_START && minutes < CONFIG.EOD_FLATTEN;
+  const { minutes, dayOfWeek, timeString } = getETTimeInfo();
+  const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+  const inHours = minutes >= CONFIG.ORB_START && minutes < CONFIG.EOD_FLATTEN;
+  console.log(`[TIME-CHECK] ${timeString} ET - Market hours: ${inHours ? 'YES' : 'NO'} (9:30 AM - 4:00 PM ET)${isWeekend ? ' [WEEKEND]' : ''}`);
+  if (isWeekend) return false;
+  return inHours;
 }
 
 function shouldFlattenEOD(): boolean {
-  const { minutes, dayOfWeek } = getETTimeInfo();
-  if (dayOfWeek === 0 || dayOfWeek === 6) return false;
-  return minutes >= CONFIG.EOD_FLATTEN;
+  const { minutes, dayOfWeek, timeString } = getETTimeInfo();
+  const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+  const shouldFlatten = minutes >= CONFIG.EOD_FLATTEN;
+  console.log(`[TIME-CHECK] ${timeString} ET - EOD flatten check: ${shouldFlatten ? 'YES (≥4:00 PM)' : 'NO (<4:00 PM)'}${isWeekend ? ' [WEEKEND]' : ''}`);
+  if (isWeekend) return false;
+  return shouldFlatten;
 }
 
 function shouldCheckDynamicFlatten(): boolean {
-  const { minutes, dayOfWeek } = getETTimeInfo();
-  if (dayOfWeek === 0 || dayOfWeek === 6) return false;
-  return minutes >= CONFIG.FIRST_FLATTEN;
+  const { minutes, dayOfWeek, timeString } = getETTimeInfo();
+  const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
+  const shouldCheck = minutes >= CONFIG.FIRST_FLATTEN;
+  console.log(`[TIME-CHECK] ${timeString} ET - Dynamic flatten check: ${shouldCheck ? 'YES (≥10:15 AM)' : 'NO (<10:15 AM)'}${isWeekend ? ' [WEEKEND]' : ''}`);
+  if (isWeekend) return false;
+  return shouldCheck;
 }
 
 // Get combined market regime (SPY 200-SMA + VIX)
@@ -705,7 +718,10 @@ function calculateRMultiple(entryPrice: number, currentPrice: number, orbRange: 
 
 // Run auto-flatten check for all users
 async function runAutoFlatten(supabase: any, reason: string): Promise<{ flattened: number; errors: number }> {
+  const timeInfo = getETTimeInfo();
+  const timestamp = `${timeInfo.timeString} ET (America/New_York)`;
   console.log(`\n=== AUTO-FLATTEN: ${reason} ===`);
+  console.log(`[FLATTEN] Timestamp: ${timestamp}`);
   
   // Allow safe simulation/testing without needing real user configs.
   // NOTE: In normal operation we always load configs from the database.
@@ -758,7 +774,8 @@ async function runAutoFlatten(supabase: any, reason: string): Promise<{ flattene
         : await getMarketData(symbol, config.api_key_id, config.secret_key);
       const exitPrice = marketData?.price || entryPrice;
       
-      console.log(`[${symbol}] Closing ${qty} shares @ ~$${exitPrice.toFixed(2)} | P&L: $${unrealizedPnL.toFixed(2)}`);
+      const closeTimestamp = getETTimeInfo().timeString;
+      console.log(`[${symbol}] End-of-day flatten at ${closeTimestamp} ET - Closing ${qty} shares @ ~$${exitPrice.toFixed(2)} | P&L: $${unrealizedPnL.toFixed(2)} | Reason: ${reason}`);
       
       const result = simulateCloseOnly
         ? ({ success: true } as const)
