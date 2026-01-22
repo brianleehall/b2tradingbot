@@ -10,6 +10,11 @@ interface OrdersCardProps {
 }
 
 export function OrdersCard({ orders, isLoading }: OrdersCardProps) {
+  // Sort orders by createdAt descending (newest first)
+  const sortedOrders = [...orders].sort((a, b) => 
+    new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
+
   return (
     <Card className="glass">
       <CardHeader className="pb-2">
@@ -21,10 +26,10 @@ export function OrdersCard({ orders, isLoading }: OrdersCardProps) {
       </CardHeader>
       <CardContent>
         <div className="space-y-3">
-          {orders.length === 0 ? (
+          {sortedOrders.length === 0 ? (
             <p className="text-sm text-muted-foreground text-center py-4">No recent orders</p>
           ) : (
-            orders.map((order) => (
+            sortedOrders.map((order) => (
               <div
                 key={order.id}
                 className="flex items-center justify-between p-3 rounded-lg bg-secondary/50"
