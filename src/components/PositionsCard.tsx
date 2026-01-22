@@ -14,7 +14,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Position } from '@/lib/types';
 import { cn } from '@/lib/utils';
-import { Briefcase, TrendingUp, TrendingDown, Loader2, X } from 'lucide-react';
+import { Briefcase, TrendingUp, TrendingDown, Loader2, X, RefreshCw } from 'lucide-react';
 import { supabase } from '@/integrations/supabase/client';
 import { toast } from 'sonner';
 
@@ -22,10 +22,49 @@ interface PositionsCardProps {
   positions: Position[];
   isLoading?: boolean;
   onPositionsClosed?: () => void;
+  onRefresh?: () => void;
 }
 
-export function PositionsCard({ positions, isLoading, onPositionsClosed }: PositionsCardProps) {
+export function PositionsCard({ positions, isLoading, onPositionsClosed, onRefresh }: PositionsCardProps) {
   const [isClosing, setIsClosing] = useState(false);
+  const [isCheckingLive, setIsCheckingLive] = useState(false);
+
+  const handleCheckLivePositions = async () => {
+    setIsCheckingLive(true);
+    try {
+      const { data, error } = await supabase.functions.invoke('alpaca-account', {
+        body: { endpoint: 'positions' }
+      });
+
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      const livePositions = data || [];
+      
+      if (livePositions.length === 0) {
+        toast.success('No open positions in Alpaca', {
+          description: 'Your account has no active positions right now.'
+        });
+      } else {
+        const positionSummary = livePositions.map((p: any) => 
+          `${p.symbol}: ${p.qty} shares @ $${Number(p.avgEntryPrice).toFixed(2)}`
+        ).join('\n');
+        
+        toast.info(`${livePositions.length} Live Position(s)`, {
+          description: positionSummary,
+          duration: 8000
+        });
+      }
+
+      // Trigger refresh to sync UI
+      onRefresh?.();
+    } catch (err) {
+      console.error('Error checking live positions:', err);
+      toast.error(err instanceof Error ? err.message : 'Failed to check live positions');
+    } finally {
+      setIsCheckingLive(false);
+    }
+  };
 
   const handleCloseAllPositions = async () => {
     setIsClosing(true);
@@ -54,6 +93,20 @@ export function PositionsCard({ positions, isLoading, onPositionsClosed }: Posit
           <Briefcase className="w-4 h-4" />
           Open Positions
           {isLoading && <Loader2 className="w-3 h-3 animate-spin" />}
+          <Button
+            variant="outline"
+            size="sm"
+            className="ml-auto h-7 text-xs"
+            onClick={handleCheckLivePositions}
+            disabled={isCheckingLive}
+          >
+            {isCheckingLive ? (
+              <Loader2 className="w-3 h-3 animate-spin mr-1" />
+            ) : (
+              <RefreshCw className="w-3 h-3 mr-1" />
+            )}
+            Check Live
+          </Button>
           {positions.length > 0 && (
             <AlertDialog>
               <AlertDialogTrigger asChild>
