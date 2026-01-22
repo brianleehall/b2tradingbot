@@ -111,7 +111,7 @@ function shouldFlattenEOD(): boolean {
   const { minutes, dayOfWeek, timeString } = getETTimeInfo();
   const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
   const shouldFlatten = minutes >= CONFIG.EOD_FLATTEN;
-  console.log(`[TIME-CHECK] ${timeString} ET - EOD flatten check: ${shouldFlatten ? 'YES (≥4:00 PM)' : 'NO (<4:00 PM)'}${isWeekend ? ' [WEEKEND]' : ''}`);
+  console.log(`[EOD-CHECK] Current time: ${timeString} ET - Flatten check: ${shouldFlatten ? 'YES - At or past 4:00 PM ET, MUST FLATTEN ALL' : 'NO - Before 4:00 PM ET'}${isWeekend ? ' [WEEKEND - No action]' : ''}`);
   if (isWeekend) return false;
   return shouldFlatten;
 }
@@ -717,11 +717,15 @@ function calculateRMultiple(entryPrice: number, currentPrice: number, orbRange: 
 }
 
 // Run auto-flatten check for all users
+// CRITICAL: This is the UNBREAKABLE end-of-day flatten to prevent overnight holds
 async function runAutoFlatten(supabase: any, reason: string): Promise<{ flattened: number; errors: number }> {
   const timeInfo = getETTimeInfo();
   const timestamp = `${timeInfo.timeString} ET (America/New_York)`;
-  console.log(`\n=== AUTO-FLATTEN: ${reason} ===`);
+  console.log(`\n${'='.repeat(60)}`);
+  console.log(`=== UNBREAKABLE AUTO-FLATTEN: ${reason} ===`);
+  console.log(`${'='.repeat(60)}`);
   console.log(`[FLATTEN] Timestamp: ${timestamp}`);
+  console.log(`[FLATTEN] This flatten CANNOT be bypassed - all positions MUST close`);
   
   // Allow safe simulation/testing without needing real user configs.
   // NOTE: In normal operation we always load configs from the database.
@@ -735,7 +739,7 @@ async function runAutoFlatten(supabase: any, reason: string): Promise<{ flattene
     : await supabase.rpc('get_active_trading_configs');
   
   if (error || !configs || configs.length === 0) {
-    console.log('No active trading configs found');
+    console.log('[FLATTEN] No active trading configs found');
     return { flattened: 0, errors: 0 };
   }
   
@@ -747,6 +751,7 @@ async function runAutoFlatten(supabase: any, reason: string): Promise<{ flattene
     
     // Cancel all open orders first
     if (!simulateCloseOnly) {
+      console.log(`[${config.user_id}] Cancelling all open orders...`);
       await cancelAllOrders(config.api_key_id, config.secret_key, config.is_paper_trading);
     }
     
@@ -756,11 +761,11 @@ async function runAutoFlatten(supabase: any, reason: string): Promise<{ flattene
       : await getOpenPositions(config.api_key_id, config.secret_key, config.is_paper_trading);
     
     if (positions.length === 0) {
-      console.log('No open positions');
+      console.log('[FLATTEN] No open positions to close');
       continue;
     }
     
-    console.log(`Found ${positions.length} open positions`);
+    console.log(`[FLATTEN] Found ${positions.length} open position(s) - CLOSING ALL`);
     
     for (const position of positions) {
       const symbol = position.symbol;
@@ -775,7 +780,9 @@ async function runAutoFlatten(supabase: any, reason: string): Promise<{ flattene
       const exitPrice = marketData?.price || entryPrice;
       
       const closeTimestamp = getETTimeInfo().timeString;
-      console.log(`[${symbol}] End-of-day flatten at ${closeTimestamp} ET - Closing ${qty} shares @ ~$${exitPrice.toFixed(2)} | P&L: $${unrealizedPnL.toFixed(2)} | Reason: ${reason}`);
+      console.log(`[FLATTEN] ${symbol}: Closing ${qty} shares @ ~$${exitPrice.toFixed(2)}`);
+      console.log(`[FLATTEN] ${symbol}: Entry: $${entryPrice.toFixed(2)} | Exit: $${exitPrice.toFixed(2)} | P&L: $${unrealizedPnL.toFixed(2)}`);
+      console.log(`[FLATTEN] ${symbol}: Timestamp: ${closeTimestamp} ET | Reason: ${reason}`);
       
       const result = simulateCloseOnly
         ? ({ success: true } as const)
@@ -783,6 +790,7 @@ async function runAutoFlatten(supabase: any, reason: string): Promise<{ flattene
       
       if (result.success) {
         flattened++;
+        console.log(`[FLATTEN] ${symbol}: ✓ CLOSED SUCCESSFULLY`);
         await logFlattenEvent(
           supabase,
           config.user_id,
@@ -795,12 +803,25 @@ async function runAutoFlatten(supabase: any, reason: string): Promise<{ flattene
         );
       } else {
         errors++;
-        console.error(`[${symbol}] Failed to close: ${result.error}`);
+        console.error(`[FLATTEN] ${symbol}: ✗ FAILED TO CLOSE: ${result.error}`);
+        // Log the failure
+        await supabase.from('trade_logs').insert({
+          user_id: config.user_id,
+          symbol,
+          side: 'flatten',
+          qty,
+          price: exitPrice,
+          strategy: 'orb-max-growth',
+          status: 'failed',
+          error_message: `EOD flatten failed: ${result.error}`,
+        });
       }
     }
   }
   
-  console.log(`\n=== FLATTEN COMPLETE: ${flattened} closed, ${errors} errors ===`);
+  console.log(`\n${'='.repeat(60)}`);
+  console.log(`=== FLATTEN COMPLETE: ${flattened} closed, ${errors} errors ===`);
+  console.log(`${'='.repeat(60)}`);
   return { flattened, errors };
 }
 
@@ -1100,6 +1121,7 @@ serve(async (req) => {
   let forceEODFlatten = false;
   let simulateTime: number | null = null;
   let testEodFlatten = false;
+  let testSmciEod = false; // New: Test SMCI at 4:01 PM ET
   
   try {
     const body = await req.json();
@@ -1107,6 +1129,7 @@ serve(async (req) => {
     forceEODFlatten = body?.forceEODFlatten === true;
     simulateTime = body?.simulateTimeMinutes || null;
     testEodFlatten = body?.testEodFlatten === true;
+    testSmciEod = body?.testSmciEod === true; // Test: Simulate SMCI position at 4:01 PM
   } catch {
     // No body or invalid JSON, continue normally
   }
@@ -1135,13 +1158,50 @@ serve(async (req) => {
     );
   }
 
-  // Check for 4:00 PM EOD flatten
+  // Check for 4:00 PM EOD flatten - UNBREAKABLE rule to prevent overnight holds
   const effectiveTime = simulateTime !== null ? simulateTime : timeInfo.minutes;
-  if (effectiveTime >= CONFIG.EOD_FLATTEN && timeInfo.dayOfWeek !== 0 && timeInfo.dayOfWeek !== 6) {
-    console.log('\n=== 4:00 PM ET - END OF DAY FLATTEN ===');
+  const isEODTime = effectiveTime >= CONFIG.EOD_FLATTEN;
+  const isWeekday = timeInfo.dayOfWeek !== 0 && timeInfo.dayOfWeek !== 6;
+  
+  console.log(`[EOD-CHECK] Current time: ${timeInfo.timeString} ET | Effective time: ${Math.floor(effectiveTime / 60)}:${(effectiveTime % 60).toString().padStart(2, '0')} ET`);
+  console.log(`[EOD-CHECK] EOD threshold: 16:00 ET (${CONFIG.EOD_FLATTEN} minutes) | Is EOD time: ${isEODTime} | Is weekday: ${isWeekday}`);
+  
+  if (isEODTime && isWeekday) {
+    console.log(`\n${'='.repeat(60)}`);
+    console.log(`=== 4:00 PM ET - UNBREAKABLE END OF DAY FLATTEN ===`);
+    console.log(`${'='.repeat(60)}`);
+    console.log(`[EOD] This flatten CANNOT be bypassed - all positions MUST close to prevent overnight holds`);
 
-    // Optional safe test hook: simulate one open position at/after EOD without touching Alpaca.
-    if (testEodFlatten) {
+    // Test: Simulate SMCI position at 4:01 PM ET
+    if (testSmciEod) {
+      console.log('\n[TEST] Simulating SMCI open position at 4:01 PM ET');
+      console.log('[TEST] Expected behavior: SMCI MUST be closed automatically');
+      (supabase as any).__simulateCloseOnly = true;
+      (supabase as any).__configsOverride = [
+        {
+          id: 'test-config-smci',
+          user_id: 'test-user-smci',
+          api_key_id: 'test',
+          secret_key: 'test',
+          is_paper_trading: true,
+          selected_strategy: 'orb-max-growth',
+          auto_trading_enabled: true,
+        } satisfies TradingConfig,
+      ];
+      (supabase as any).__positionsOverrideByUser = {
+        'test-user-smci': [
+          {
+            symbol: 'SMCI',
+            qty: '100',
+            side: 'long',
+            avg_entry_price: '32.50',
+            unrealized_pl: '-45.00',
+          } satisfies Position,
+        ],
+      };
+    }
+    // Legacy test hook for AAPL
+    else if (testEodFlatten) {
       console.log('[EOD-TEST] Running simulated EOD flatten (no Alpaca calls)');
       (supabase as any).__simulateCloseOnly = true;
       (supabase as any).__configsOverride = [
@@ -1168,15 +1228,26 @@ serve(async (req) => {
       };
     }
 
-    const result = await runAutoFlatten(supabase, 'End-of-day flatten');
+    const result = await runAutoFlatten(supabase, 'End-of-day flatten (4:00 PM ET) - Preventing overnight holds');
+    
+    const response: any = { 
+      action: 'eod_flatten',
+      reason: 'End-of-day flatten (4:00 PM ET)',
+      message: 'UNBREAKABLE: All positions closed to prevent overnight holds',
+      flattened: result.flattened, 
+      errors: result.errors,
+      timeET: `${timeInfo.hours}:${timeInfo.mins.toString().padStart(2, '0')}`,
+      effectiveTimeET: `${Math.floor(effectiveTime / 60)}:${(effectiveTime % 60).toString().padStart(2, '0')}`
+    };
+    
+    if (testSmciEod) {
+      response.test = 'SMCI EOD flatten simulation';
+      response.testResult = result.flattened > 0 ? 'PASS - SMCI was closed' : 'FAIL - SMCI was NOT closed';
+      console.log(`\n[TEST RESULT] ${response.testResult}`);
+    }
+    
     return new Response(
-      JSON.stringify({ 
-        action: 'eod_flatten',
-        reason: 'End-of-day flatten',
-        flattened: result.flattened, 
-        errors: result.errors,
-        timeET: `${timeInfo.hours}:${timeInfo.mins.toString().padStart(2, '0')}` 
-      }),
+      JSON.stringify(response),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
     );
   }
