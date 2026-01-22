@@ -805,17 +805,21 @@ async function runAutoFlatten(supabase: any, reason: string): Promise<{ flattene
 }
 
 // Run dynamic flatten check (10:15 AM rule with +1.5R extension)
+// NOTE: This runs REGARDLESS of daily loss limit - positions are always managed/exited
 async function runDynamicFlatten(supabase: any): Promise<{ flattened: number; extended: number }> {
   const timeInfo = getETTimeInfo();
-  console.log(`\n=== DYNAMIC FLATTEN CHECK at ${timeInfo.hours}:${timeInfo.mins.toString().padStart(2, '0')} ET ===`);
+  console.log(`\n=== DYNAMIC FLATTEN CHECK at ${timeInfo.timeString} ET ===`);
+  console.log(`[DYNAMIC-FLATTEN] This runs regardless of daily loss limit - exits are never blocked`);
   
   // Only run after 10:15 AM ET
   if (timeInfo.minutes < CONFIG.FIRST_FLATTEN) {
+    console.log(`[DYNAMIC-FLATTEN] Too early (before 10:15 AM ET) - no action yet`);
     return { flattened: 0, extended: 0 };
   }
   
   // If past 11:30 AM, force flatten everything
   if (timeInfo.minutes >= CONFIG.EXTENDED_END) {
+    console.log(`[DYNAMIC-FLATTEN] Past 11:30 AM ET - force flattening ALL remaining positions`);
     const result = await runAutoFlatten(supabase, 'Extended session end (11:30 AM ET)');
     return { flattened: result.flattened, extended: 0 };
   }
@@ -909,9 +913,10 @@ async function runTradingCycle(supabase: any): Promise<{ results: any[], skipped
       continue;
     }
     
-    // Check daily loss limit
+    // Check daily loss limit - only block NEW trades, not exits
     if (accountInfo.dailyPnLPercent <= -(CONFIG.MAX_DAILY_LOSS_PERCENT * 100)) {
-      console.log(`Daily loss limit hit: ${accountInfo.dailyPnLPercent.toFixed(2)}%`);
+      console.log(`[LOSS-LIMIT] Daily loss limit hit: ${accountInfo.dailyPnLPercent.toFixed(2)}% (threshold: -${(CONFIG.MAX_DAILY_LOSS_PERCENT * 100).toFixed(0)}%)`);
+      console.log(`[LOSS-LIMIT] NEW entries blocked - but existing positions will still be managed/flattened by dynamic stop and EOD rules`);
       continue;
     }
     
