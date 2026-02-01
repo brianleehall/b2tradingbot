@@ -17,17 +17,17 @@ const regimeConfig = {
   bull: {
     label: 'Bull Regime',
     color: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30',
-    description: 'SPY > 200-SMA & VIX ≤25 → Longs + Shorts allowed',
+    description: 'SPY > 200-SMA & VIX ≤25 → Longs allowed, quality setups only',
   },
   elevated_vol: {
-    label: 'Elevated Vol',
+    label: 'Elevated Vol — NO TRADES',
     color: 'bg-amber-500/20 text-amber-400 border-amber-500/30',
-    description: 'SPY > 200-SMA but VIX >25 → Shorts only',
+    description: 'SPY > 200-SMA but VIX >25 → Sitting in cash (v9: bear trades removed)',
   },
   bear: {
-    label: 'Bear Regime',
+    label: 'Bear Regime — NO TRADES',
     color: 'bg-red-500/20 text-red-400 border-red-500/30',
-    description: 'SPY < 200-SMA → Shorts only',
+    description: 'SPY < 200-SMA → Sitting in cash (v9: bear trades removed)',
   },
 };
 
@@ -65,11 +65,11 @@ export function RulesCard({
           <span className="font-bold text-sm">{regime.label}</span>
           {longsAllowed ? (
             <span className="text-xs px-2 py-0.5 rounded bg-emerald-500/20 text-emerald-400">
-              LONGS + SHORTS
+              ACTIVE — LONGS
             </span>
           ) : (
             <span className="text-xs px-2 py-0.5 rounded bg-red-500/20 text-red-400">
-              SHORTS ONLY
+              PAUSED — CASH
             </span>
           )}
         </div>
@@ -150,7 +150,7 @@ export function RulesCard({
         </div>
 
         <div className="flex items-center justify-between">
-          <span className="text-muted-foreground">+1.5R profit → 9 EMA trail</span>
+          <span className="text-muted-foreground">+1.0R profit → 9 EMA trail</span>
           <Target className="h-4 w-4 text-primary" />
         </div>
 
@@ -164,7 +164,7 @@ export function RulesCard({
       <div className="border-t border-border pt-3 mt-3">
         <div className="text-xs text-muted-foreground space-y-1">
           <p className="font-medium text-foreground">Dynamic Session Stop:</p>
-          <p>• At 10:15 AM: If any position is +1.5R → extend to 11:30 AM with 9 EMA trail</p>
+          <p>• At 10:15 AM: If any position is +1.0R → extend to 11:30 AM with 9 EMA trail</p>
           <p>• Otherwise → flatten everything at 10:15 AM sharp</p>
         </div>
       </div>

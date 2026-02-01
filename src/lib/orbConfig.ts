@@ -75,15 +75,16 @@ export const MAX_GROWTH_CONFIG = {
   MAX_TRADES_PER_DAY: 3,
   MAX_DAILY_LOSS_PERCENT: 0.03,
   
-  // Filters
-  VIX_SHORTS_ONLY: 25,         // VIX > 25 = shorts only
-  VIX_DOUBLE_SIZE: 18,         // VIX < 18 = 2x size on #1
+  // Filters — v9: updated to match backend
+  VIX_SHORTS_ONLY: 25,         // VIX > 25 = no trades (was shorts only)
+  VIX_DOUBLE_SIZE: 18,         // VIX ≤ 18 = 3% risk on #1
   PREMARKET_COOLOFF: 8,        // Skip if >8% pre-market
   LOW_VOLUME_THRESHOLD: 0.8,   // 80% of 10-day avg
-  PROFIT_EXTENSION_R: 1.5,     // +1.5R to extend session
+  PROFIT_EXTENSION_R: 1.0,     // +1.0R to extend session (was 1.5)
+  SKIP_BEAR_REGIME: true,      // v9: No trades in bear/elevated_vol
   
   // Volume confirmation
-  MIN_VOLUME_RATIO: 1.5,       // 150% of avg for signal
+  MIN_VOLUME_RATIO: 1.2,       // 120% of avg for signal (was 150%)
 };
 
 // Time utilities (ET timezone)
