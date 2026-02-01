@@ -237,6 +237,7 @@ export type Database = {
           user_id: string
         }[]
       }
+      get_service_role_key: { Args: never; Returns: string }
       get_user_orb_tickers: { Args: { p_user_id: string }; Returns: string[] }
     }
     Enums: {
