@@ -36,6 +36,7 @@ interface ScanResult {
 const CRYPTO_PAIRS = ['BTCUSD', 'ETHUSD'];
 
 // Expanded scan list - high-volatility stocks known for ORB setups
+// UPDATED: Added more liquid large-cap stocks per academic research
 const SCAN_STOCKS = [
   // Tech/Semis
   'NVDA', 'AMD', 'SMCI', 'ARM', 'AVGO', 'MRVL', 'MU', 'INTC',
@@ -49,6 +50,9 @@ const SCAN_STOCKS = [
   'AFRM', 'UPST', 'SOFI', 'HOOD',
   // Other high-beta
   'PLUG', 'GSAT', 'META', 'AAPL', 'GOOGL', 'AMZN',
+  // NEW: Large-cap liquid stocks (best ORB candidates per Zarattini/Barbon/Aziz 2024)
+  'ORCL', 'CRM', 'NFLX', 'BA', 'DIS', 'JPM', 'GS', 'V', 'MA',
+  'ABNB', 'UBER', 'SHOP', 'NET', 'DDOG', 'ZS',
 ];
 
 // 4 fallback stocks when zero qualify - "Proven ORB Leaders"
@@ -56,26 +60,29 @@ const FALLBACK_STOCKS = ['NVDA', 'TSLA', 'AMD', 'SMCI'];
 const MIN_FALLBACK_STOCKS = 4;
 const MAX_STOCKS = 8;
 
-// Float data in millions - stocks without entries are assumed to have large floats (>150M)
+// Float data in millions - for informational purposes only (no longer used to filter)
 const STOCK_FLOAT: Record<string, number> = {
   'SMCI': 58, 'ARM': 102, 'COIN': 115,
   'MARA': 85, 'RIOT': 95, 'MSTR': 110, 'HUT': 250, 'CLSK': 75,
   'IONQ': 42, 'RGTI': 35, 'QUBT': 28, 'SOUN': 55, 'AFRM': 95,
   'UPST': 78, 'PLUG': 110, 'SOFI': 98, 'HOOD': 88, 'RIVN': 130,
   'XPEV': 90, 'LI': 95, 'NIO': 120, 'GSAT': 80, 'BITF': 65,
-  // Large-cap stocks with float > 150M (excluded by default)
+  // Large-cap stocks
   'NVDA': 2460, 'TSLA': 3180, 'AMD': 1620, 'META': 2570, 
   'AAPL': 15200, 'AVGO': 466, 'MRVL': 865, 'MU': 1100, 
   'INTC': 4250, 'PLTR': 2280, 'LCID': 1900, 'GOOGL': 12000, 'AMZN': 10500,
+  'ORCL': 2700, 'CRM': 970, 'NFLX': 430, 'BA': 600, 'DIS': 1800,
+  'JPM': 2900, 'GS': 320, 'V': 1650, 'MA': 930, 'ABNB': 600,
+  'UBER': 2000, 'SHOP': 1250, 'NET': 330, 'DDOG': 320, 'ZS': 150,
 };
 
-// Stricter criteria as specified
+// UPDATED CRITERIA - Loosened per academic research and QuantConnect studies
 const CRITERIA = {
-  MIN_RVOL: 2.25,
-  MIN_CHANGE_PCT: 3.5,
-  MIN_AVG_VOLUME: 800000,
-  MIN_PRICE: 20,  // Strict: close >= $20
-  MAX_FLOAT_MILLIONS: 150,  // Strict: float <= 150M
+  MIN_RVOL: 1.5,              // Changed from 2.25 - industry standard per ForexTester
+  MIN_CHANGE_PCT: 2.0,        // Changed from 3.5 - capture more setups
+  MIN_AVG_VOLUME: 800000,     // Keep at 800K
+  MIN_PRICE: 5,               // Changed from 20 - academic standard is $5+
+  // Float filter REMOVED - large-caps are actually best ORB candidates due to liquidity
 };
 
 function getLast5TradingDays(): string[] {
@@ -173,7 +180,7 @@ async function getSPY200SMA(apiKey: string): Promise<{ currentPrice: number; sma
 }
 
 serve(async (req) => {
-  console.log("ORB Stock Selector v7 (5-Day Lookback) triggered at:", new Date().toISOString());
+  console.log("ORB Stock Selector v8 (Loosened Criteria) triggered at:", new Date().toISOString());
   
   if (req.method === 'OPTIONS') {
     return new Response(null, { headers: corsHeaders });
@@ -223,9 +230,10 @@ serve(async (req) => {
     const fromDate = new Date(Date.now() - 50 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
     const toDate = tradingDays[0]; // Most recent
 
-    console.log(`=== 5-DAY LOOKBACK SCAN ===`);
+    console.log(`=== 5-DAY LOOKBACK SCAN (v8 LOOSENED CRITERIA) ===`);
     console.log(`Scanning days: ${tradingDays.join(', ')}`);
     console.log(`Criteria: RVOL≥${CRITERIA.MIN_RVOL}, Change≥±${CRITERIA.MIN_CHANGE_PCT}%, Price≥$${CRITERIA.MIN_PRICE}, AvgVol≥${CRITERIA.MIN_AVG_VOLUME/1000}K`);
+    console.log(`Float filter: REMOVED (large-caps are best ORB candidates)`);
 
     // Get market regime
     const spyData = await getSPY200SMA(polygonApiKey);
@@ -248,15 +256,8 @@ serve(async (req) => {
     const qualifiedStocks: Map<string, QualifyingData> = new Map();
     let scannedCount = 0;
 
-    // Scan each stock
+    // Scan each stock - NO FLOAT FILTER
     for (const symbol of SCAN_STOCKS) {
-      // STRICT float constraint: exclude if float > 150M or unknown (assume large)
-      const stockFloat = STOCK_FLOAT[symbol];
-      if (!stockFloat || stockFloat > CRITERIA.MAX_FLOAT_MILLIONS) {
-        console.log(`Skipping ${symbol}: float ${stockFloat || 'unknown'} > ${CRITERIA.MAX_FLOAT_MILLIONS}M`);
-        continue;
-      }
-
       // Rate limit
       await new Promise(r => setTimeout(r, 120));
       scannedCount++;
@@ -294,15 +295,15 @@ serve(async (req) => {
           : 0;
         const rvol = avgVolume30d > 0 ? dayVolume / avgVolume30d : 0;
 
-        // Check ALL criteria STRICTLY
+        // Check criteria (no float filter)
         const meetsRVOL = rvol >= CRITERIA.MIN_RVOL;
         const meetsChange = Math.abs(priceChange) >= CRITERIA.MIN_CHANGE_PCT;
-        const meetsPrice = closePrice >= CRITERIA.MIN_PRICE;  // STRICT: must be >= $20
+        const meetsPrice = closePrice >= CRITERIA.MIN_PRICE;
 
         // Log why stocks don't qualify for debugging
         if (!meetsRVOL || !meetsChange || !meetsPrice) {
-          if (Math.abs(priceChange) >= 2 || rvol >= 2) {
-            console.log(`✗ ${symbol} on ${targetDate}: $${closePrice.toFixed(2)} (price≥$20: ${meetsPrice}), ${priceChange.toFixed(1)}% (≥±3.5%: ${meetsChange}), RVOL ${rvol.toFixed(2)}x (≥2.5x: ${meetsRVOL})`);
+          if (Math.abs(priceChange) >= 1.5 || rvol >= 1.2) {
+            console.log(`✗ ${symbol} on ${targetDate}: $${closePrice.toFixed(2)} (price≥$5: ${meetsPrice}), ${priceChange.toFixed(1)}% (≥±2%: ${meetsChange}), RVOL ${rvol.toFixed(2)}x (≥1.5x: ${meetsRVOL})`);
           }
           continue;
         }
@@ -320,7 +321,7 @@ serve(async (req) => {
             price: Math.round(closePrice * 100) / 100,
             avgVolume: Math.round(avgVolume30d),
             volume: dayVolume,
-            float: stockFloat,
+            float: STOCK_FLOAT[symbol],
             exchange: 'NASDAQ',
           });
         }
@@ -353,7 +354,7 @@ serve(async (req) => {
         isFallback: false,
       }));
 
-    // If ZERO stocks qualified, add exactly 2 fallbacks
+    // If ZERO stocks qualified, add fallbacks
     if (topStocks.length === 0) {
       console.log(`No stocks qualified across 5 days. Adding ${FALLBACK_STOCKS.length} fallbacks: ${FALLBACK_STOCKS.join(', ')}`);
       
@@ -399,6 +400,8 @@ serve(async (req) => {
           const staticData: Record<string, { price: number; avgVolume: number }> = {
             'NVDA': { price: 185, avgVolume: 250000000 },
             'TSLA': { price: 445, avgVolume: 100000000 },
+            'AMD': { price: 120, avgVolume: 50000000 },
+            'SMCI': { price: 30, avgVolume: 20000000 },
           };
           const data = staticData[fallback] || { price: 100, avgVolume: 10000000 };
           fallbackStock = {
@@ -417,37 +420,6 @@ serve(async (req) => {
         topStocks.push(fallbackStock);
       }
     }
-    
-    // Only add fallbacks if we have ZERO stocks - add all 4 proven ORB leaders
-    if (topStocks.length === 0) {
-      console.log(`No stocks qualified across 5 days. Adding ${MIN_FALLBACK_STOCKS} fallbacks: ${FALLBACK_STOCKS.join(', ')}`);
-      
-      const staticData: Record<string, { price: number; avgVolume: number }> = {
-        'NVDA': { price: 185, avgVolume: 250000000 },
-        'TSLA': { price: 445, avgVolume: 100000000 },
-        'AMD': { price: 120, avgVolume: 50000000 },
-        'SMCI': { price: 30, avgVolume: 20000000 },
-      };
-      
-      for (const fallback of FALLBACK_STOCKS) {
-        if (topStocks.length >= MIN_FALLBACK_STOCKS) break;
-        
-        const data = staticData[fallback] || { price: 100, avgVolume: 10000000 };
-        
-        console.log(`+ Fallback ${fallback} (static data)`);
-        topStocks.push({
-          symbol: fallback,
-          priceChange: 0,
-          rvol: 1,
-          price: data.price,
-          avgVolume: data.avgVolume,
-          volume: data.avgVolume,
-          float: STOCK_FLOAT[fallback],
-          exchange: 'NASDAQ',
-          isFallback: true,
-        });
-      }
-    }
 
     // ========== CRYPTO SCANNING ==========
     console.log(`\n=== CRYPTO SCAN (5-Day Lookback) ===`);
@@ -456,11 +428,11 @@ serve(async (req) => {
     
     const cryptoStocks: SelectedStock[] = [];
     
-    // Crypto-specific criteria (no float constraint, different volume)
+    // Crypto-specific criteria (UPDATED to match stock criteria)
     const CRYPTO_CRITERIA = {
-      MIN_RVOL: 2.25,
-      MIN_CHANGE_PCT: 3.5,
-      MIN_AVG_VOLUME: 100000000, // $100M volume for crypto
+      MIN_RVOL: 1.5,              // Changed from 2.25
+      MIN_CHANGE_PCT: 2.0,        // Changed from 3.5
+      MIN_AVG_VOLUME: 100000000,  // $100M volume for crypto
     };
     
     for (const symbol of CRYPTO_PAIRS) {
@@ -502,7 +474,7 @@ serve(async (req) => {
         const meetsRVOL = rvol >= CRYPTO_CRITERIA.MIN_RVOL;
         const meetsChange = Math.abs(priceChange) >= CRYPTO_CRITERIA.MIN_CHANGE_PCT;
         
-        console.log(`[CRYPTO] ${symbol} on ${targetDate}: $${closePrice.toFixed(2)}, ${priceChange.toFixed(1)}%, RVOL ${rvol.toFixed(2)}x (RVOL≥2.25: ${meetsRVOL}, Change≥3.5%: ${meetsChange})`);
+        console.log(`[CRYPTO] ${symbol} on ${targetDate}: $${closePrice.toFixed(2)}, ${priceChange.toFixed(1)}%, RVOL ${rvol.toFixed(2)}x (RVOL≥1.5: ${meetsRVOL}, Change≥2%: ${meetsChange})`);
         
         if (meetsRVOL && meetsChange) {
           console.log(`✓ ${symbol} QUALIFIED (crypto)`);

@@ -26,25 +26,25 @@ interface Position {
 }
 
 // =====================
-// MAX-GROWTH CONFIGURATION
+// MAX-GROWTH CONFIGURATION - UPDATED per academic research
 // =====================
 const CONFIG = {
   // Session timing (minutes from midnight ET)
   ORB_START: 9 * 60 + 30,      // 9:30 AM
   ORB_END: 9 * 60 + 35,        // 9:35 AM
   TRADING_START: 9 * 60 + 29,  // 9:29 AM
-  TRADING_END: 10 * 60 + 30,   // 10:30 AM
+  TRADING_END: 11 * 60,        // UPDATED: 11:00 AM (was 10:30 AM - 630)
   FIRST_FLATTEN: 10 * 60 + 15, // 10:15 AM
   EXTENDED_END: 11 * 60 + 30,  // 11:30 AM max
   REENTRY_START: 9 * 60 + 50,  // 9:50 AM
   REENTRY_END: 10 * 60 + 5,    // 10:05 AM
   EOD_FLATTEN: 16 * 60,        // 4:00 PM - Force flatten all positions
   
-  // Risk management
+  // Risk management - UPDATED
   TIER1_RISK: 0.02,            // 2% for #1 ranked stock (default)
   TIER1_AGGRESSIVE_RISK: 0.03, // 3% for #1 in aggressive bull mode
   TIER2_RISK: 0.01,            // 1% for #2-4
-  MAX_TRADES_PER_DAY: 3,
+  MAX_TRADES_PER_DAY: 5,       // UPDATED: 5 (was 3 - QuantConnect trades up to 20)
   MAX_DAILY_LOSS_PERCENT: 0.03, // -3% daily stop
   
   // Crypto allocation
@@ -56,11 +56,29 @@ const CONFIG = {
   VIX_DOUBLE_SIZE_THRESHOLD: 18,
   PREMARKET_COOLOFF_PERCENT: 8,
   LOW_VOLUME_THRESHOLD: 0.8,
-  PROFIT_EXTENSION_R: 1.5,
+  PROFIT_EXTENSION_R: 1.0,     // UPDATED: 1.0 (was 1.5 - extend session more often)
   
-  // Volume confirmation
-  MIN_VOLUME_RATIO: 1.5,
+  // Volume confirmation - UPDATED
+  MIN_VOLUME_RATIO: 1.2,       // UPDATED: 1.2 (was 1.5 - per QuantConnect research)
+  
+  // Profit target multiplier - UPDATED
+  TARGET_R_MULTIPLE: 3,        // UPDATED: 3x ORB height (was 2x - better risk:reward)
+  
+  // ATR-based stop fallback
+  MIN_ORB_RANGE_PERCENT: 0.3,  // NEW: If ORB range < 0.3% of price, use ATR
+  ATR_STOP_MULTIPLIER: 1.5,    // NEW: Use 1.5x ATR for stop distance
 };
+
+// Get dynamic timezone offset for America/New_York (handles DST automatically)
+function getETOffset(): string {
+  const now = new Date();
+  const etString = now.toLocaleString('en-US', { 
+    timeZone: 'America/New_York', 
+    timeZoneName: 'short' 
+  });
+  // Returns -05:00 for EST, -04:00 for EDT
+  return etString.includes('EDT') ? '-04:00' : '-05:00';
+}
 
 // Proper timezone handling using Intl API with America/New_York
 function getETTimeInfo(): { minutes: number; hours: number; mins: number; date: Date; dayOfWeek: number; timeString: string } {
@@ -89,11 +107,17 @@ function getETTimeInfo(): { minutes: number; hours: number; mins: number; date: 
   return { minutes: hours * 60 + mins, hours, mins, date: etDate, dayOfWeek, timeString };
 }
 
+// Get the current ET date string for comparisons
+function getETDateString(): string {
+  const now = new Date();
+  return now.toLocaleDateString('en-CA', { timeZone: 'America/New_York' }); // Returns YYYY-MM-DD
+}
+
 function isWithinTradingWindow(): boolean {
   const { minutes, dayOfWeek, timeString } = getETTimeInfo();
   const isWeekend = dayOfWeek === 0 || dayOfWeek === 6;
   const inWindow = minutes >= CONFIG.TRADING_START && minutes <= CONFIG.TRADING_END;
-  console.log(`[TIME-CHECK] ${timeString} ET - Trading window: ${inWindow ? 'YES' : 'NO'} (9:29-10:30 AM ET)${isWeekend ? ' [WEEKEND]' : ''}`);
+  console.log(`[TIME-CHECK] ${timeString} ET - Trading window: ${inWindow ? 'YES' : 'NO'} (9:29-11:00 AM ET)${isWeekend ? ' [WEEKEND]' : ''}`);
   if (isWeekend) return false;
   return inWindow;
 }
@@ -125,13 +149,15 @@ function shouldCheckDynamicFlatten(): boolean {
   return shouldCheck;
 }
 
-// Get combined market regime (SPY 200-SMA + VIX)
+// Get combined market regime (SPY 200-SMA + VIX) with trend filter
 async function getCombinedRegime(apiKeyId: string, secretKey: string): Promise<{
   spyPrice: number;
   sma200: number;
+  sma50: number;
   vixLevel: number;
   regime: 'bull' | 'elevated_vol' | 'bear';
   longsAllowed: boolean;
+  strongUptrend: boolean; // NEW: For trend filter
 }> {
   try {
     const polygonKey = Deno.env.get('POLYGON_API_KEY');
@@ -153,8 +179,9 @@ async function getCombinedRegime(apiKeyId: string, secretKey: string): Promise<{
       spyPrice = tradeData.trade?.p || 0;
     }
     
-    // Get 200-day SMA from Polygon
+    // Get 200-day and 50-day SMA from Polygon
     let sma200 = 0;
+    let sma50 = 0;
     if (polygonKey) {
       const endDate = new Date();
       const startDate = new Date();
@@ -168,14 +195,22 @@ async function getCombinedRegime(apiKeyId: string, secretKey: string): Promise<{
         const smaData = await smaResponse.json();
         const bars = smaData.results || [];
         if (bars.length >= 200) {
-          const sum = bars.slice(0, 200).reduce((acc: number, bar: any) => acc + bar.c, 0);
-          sma200 = sum / 200;
+          const sum200 = bars.slice(0, 200).reduce((acc: number, bar: any) => acc + bar.c, 0);
+          sma200 = sum200 / 200;
+          const sum50 = bars.slice(0, 50).reduce((acc: number, bar: any) => acc + bar.c, 0);
+          sma50 = sum50 / 50;
+        } else if (bars.length >= 50) {
+          sma200 = spyPrice * 0.95;
+          const sum50 = bars.slice(0, 50).reduce((acc: number, bar: any) => acc + bar.c, 0);
+          sma50 = sum50 / 50;
         } else {
           sma200 = spyPrice * 0.95;
+          sma50 = spyPrice * 0.98;
         }
       }
     } else {
       sma200 = spyPrice * 0.95;
+      sma50 = spyPrice * 0.98;
     }
     
     // Get VIX level
@@ -199,16 +234,20 @@ async function getCombinedRegime(apiKeyId: string, secretKey: string): Promise<{
     }
     
     // Combined regime decision
-    const spyAboveSMA = spyPrice > sma200;
+    const spyAboveSMA200 = spyPrice > sma200;
+    const spyAboveSMA50 = spyPrice > sma50;
     const vixLow = vixLevel <= CONFIG.VIX_SHORTS_ONLY_THRESHOLD;
+    
+    // NEW: Strong uptrend = above BOTH 50 and 200 SMA
+    const strongUptrend = spyAboveSMA200 && spyAboveSMA50;
     
     let regime: 'bull' | 'elevated_vol' | 'bear';
     let longsAllowed: boolean;
     
-    if (spyAboveSMA && vixLow) {
+    if (spyAboveSMA200 && vixLow) {
       regime = 'bull';
       longsAllowed = true;
-    } else if (spyAboveSMA && !vixLow) {
+    } else if (spyAboveSMA200 && !vixLow) {
       regime = 'elevated_vol';
       longsAllowed = false;
     } else {
@@ -216,24 +255,27 @@ async function getCombinedRegime(apiKeyId: string, secretKey: string): Promise<{
       longsAllowed = false;
     }
     
-    console.log(`[REGIME] SPY: $${spyPrice.toFixed(2)}, 200-SMA: $${sma200.toFixed(2)}, VIX: ${vixLevel.toFixed(1)} → ${regime.toUpperCase()} (Longs: ${longsAllowed ? 'YES' : 'NO'})`);
+    console.log(`[REGIME] SPY: $${spyPrice.toFixed(2)}, 50-SMA: $${sma50.toFixed(2)}, 200-SMA: $${sma200.toFixed(2)}, VIX: ${vixLevel.toFixed(1)} → ${regime.toUpperCase()} (Longs: ${longsAllowed ? 'YES' : 'NO'}, Strong Uptrend: ${strongUptrend ? 'YES' : 'NO'})`);
     
-    return { spyPrice, sma200, vixLevel, regime, longsAllowed };
+    return { spyPrice, sma200, sma50, vixLevel, regime, longsAllowed, strongUptrend };
   } catch (error) {
     console.error('Error fetching regime:', error);
-    return { spyPrice: 0, sma200: 0, vixLevel: 20, regime: 'bull', longsAllowed: true };
+    return { spyPrice: 0, sma200: 0, sma50: 0, vixLevel: 20, regime: 'bull', longsAllowed: true, strongUptrend: false };
   }
 }
 
-// Get ORB range (first 5-min candle)
+// Get ORB range (first 5-min candle) - FIXED DST BUG
 async function getORBRange(ticker: string, apiKeyId: string, secretKey: string): Promise<{ high: number; low: number } | null> {
   try {
     const now = new Date();
     const etDate = new Date(now.toLocaleString('en-US', { timeZone: 'America/New_York' }));
     const dateStr = etDate.toISOString().split('T')[0];
     
+    // FIXED: Use dynamic offset instead of hardcoded -05:00
+    const offset = getETOffset();
+    
     const response = await fetch(
-      `https://data.alpaca.markets/v2/stocks/${ticker}/bars?timeframe=5Min&start=${dateStr}T09:30:00-05:00&end=${dateStr}T09:35:00-05:00&limit=1`,
+      `https://data.alpaca.markets/v2/stocks/${ticker}/bars?timeframe=5Min&start=${dateStr}T09:30:00${offset}&end=${dateStr}T09:35:00${offset}&limit=1`,
       {
         headers: {
           'APCA-API-KEY-ID': apiKeyId,
@@ -248,6 +290,41 @@ async function getORBRange(ticker: string, apiKeyId: string, secretKey: string):
     
     if (!bars || bars.length === 0) return null;
     return { high: bars[0].h, low: bars[0].l };
+  } catch {
+    return null;
+  }
+}
+
+// Get ATR for a stock (for ATR-based stops)
+async function getATR(ticker: string, apiKeyId: string, secretKey: string, periods: number = 14): Promise<number | null> {
+  try {
+    const response = await fetch(
+      `https://data.alpaca.markets/v2/stocks/${ticker}/bars?timeframe=1Day&limit=${periods + 1}`,
+      {
+        headers: {
+          'APCA-API-KEY-ID': apiKeyId,
+          'APCA-API-SECRET-KEY': secretKey,
+        },
+      }
+    );
+    
+    if (!response.ok) return null;
+    const data = await response.json();
+    const bars = data.bars || [];
+    
+    if (bars.length < periods + 1) return null;
+    
+    // Calculate True Range for each day
+    let atrSum = 0;
+    for (let i = 1; i < bars.length; i++) {
+      const high = bars[i].h;
+      const low = bars[i].l;
+      const prevClose = bars[i - 1].c;
+      const tr = Math.max(high - low, Math.abs(high - prevClose), Math.abs(low - prevClose));
+      atrSum += tr;
+    }
+    
+    return atrSum / periods;
   } catch {
     return null;
   }
@@ -344,7 +421,7 @@ async function getMarketData(ticker: string, apiKeyId: string, secretKey: string
   }
 }
 
-// Check ORB breakout signal with all filters
+// Check ORB breakout signal with all filters (including trend filter)
 function checkORBSignal(
   orbHigh: number,
   orbLow: number,
@@ -353,7 +430,8 @@ function checkORBSignal(
   avgVolume: number,
   premarketChange: number,
   longsAllowed: boolean,
-  regime: string
+  regime: string,
+  strongUptrend: boolean
 ): { signal: 'long' | 'short' | null; skipReason?: string } {
   // Cool-off rule
   if (Math.abs(premarketChange) > CONFIG.PREMARKET_COOLOFF_PERCENT) {
@@ -371,8 +449,12 @@ function checkORBSignal(
     return { signal: 'long' };
   }
   
-  // Short breakout
+  // Short breakout - with trend filter
   if (currentPrice < orbLow && volumeCondition) {
+    // NEW: If in strong uptrend, skip shorts (longs only in uptrend)
+    if (strongUptrend) {
+      return { signal: null, skipReason: `Strong uptrend (SPY > 50 & 200 SMA) - longs only` };
+    }
     return { signal: 'short' };
   }
   
@@ -690,13 +772,6 @@ async function logFlattenEvent(
       strategy: 'orb-max-growth',
       status: 'flattened',
       error_message: reason,
-      notes: JSON.stringify({
-        reason,
-        entryPrice,
-        exitPrice,
-        pnl,
-        timestamp: new Date().toISOString(),
-      }),
     });
     console.log(`[FLATTEN-LOG] ${symbol}: ${reason} | P&L: $${pnl.toFixed(2)}`);
   } catch (error) {
@@ -825,7 +900,7 @@ async function runAutoFlatten(supabase: any, reason: string): Promise<{ flattene
   return { flattened, errors };
 }
 
-// Run dynamic flatten check (10:15 AM rule with +1.5R extension)
+// Run dynamic flatten check (10:15 AM rule with +1.0R extension)
 // NOTE: This runs REGARDLESS of daily loss limit - positions are always managed/exited
 async function runDynamicFlatten(supabase: any): Promise<{ flattened: number; extended: number }> {
   const timeInfo = getETTimeInfo();
@@ -882,21 +957,54 @@ async function runDynamicFlatten(supabase: any): Promise<{ flattened: number; ex
       
       console.log(`[${symbol}] R-Multiple: ${rMultiple.toFixed(2)}R | P&L: $${unrealizedPnL.toFixed(2)}`);
       
-      // If position is +1.5R or better, allow extension to 11:30 AM
+      // UPDATED: If position is +1.0R or better, allow extension to 11:30 AM (was +1.5R)
       if (rMultiple >= CONFIG.PROFIT_EXTENSION_R) {
-        console.log(`[${symbol}] +${rMultiple.toFixed(2)}R ≥ 1.5R → Session extended to 11:30 AM`);
+        console.log(`[${symbol}] +${rMultiple.toFixed(2)}R ≥ ${CONFIG.PROFIT_EXTENSION_R}R → Session extended to 11:30 AM`);
         extended++;
         // TODO: Could implement trailing stop to 9 EMA here
       } else if (timeInfo.minutes >= CONFIG.FIRST_FLATTEN + 15) {
         // After 10:30 AM, flatten positions not meeting threshold
         await closePosition(symbol, config.api_key_id, config.secret_key, config.is_paper_trading);
-        await logFlattenEvent(supabase, config.user_id, symbol, `Dynamic stop at ${timeInfo.hours}:${timeInfo.mins.toString().padStart(2, '0')} ET (${rMultiple.toFixed(2)}R < 1.5R)`, qty, entryPrice, marketData.price, unrealizedPnL);
+        await logFlattenEvent(supabase, config.user_id, symbol, `Dynamic stop at ${timeInfo.hours}:${timeInfo.mins.toString().padStart(2, '0')} ET (${rMultiple.toFixed(2)}R < ${CONFIG.PROFIT_EXTENSION_R}R)`, qty, entryPrice, marketData.price, unrealizedPnL);
         flattened++;
       }
     }
   }
   
   return { flattened, extended };
+}
+
+// Backend auto-reset for daily loss lock
+async function checkAndResetDailyLock(supabase: any): Promise<void> {
+  const today = getETDateString();
+  
+  // Check trading_state table for locks that need resetting
+  const { data: states, error } = await supabase
+    .from('trading_state')
+    .select('*')
+    .eq('is_locked', true)
+    .eq('manual_stop', false); // Only auto-reset if NOT a manual stop
+  
+  if (error || !states || states.length === 0) {
+    return;
+  }
+  
+  for (const state of states) {
+    // If lock was from a previous day, reset it
+    if (state.lock_date && state.lock_date !== today) {
+      console.log(`[AUTO-RESET] Resetting daily lock for user ${state.user_id} (lock from ${state.lock_date})`);
+      
+      await supabase
+        .from('trading_state')
+        .update({
+          is_locked: false,
+          lock_reason: null,
+          lock_date: null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('user_id', state.user_id);
+    }
+  }
 }
 
 // Core trading logic extracted for reuse
@@ -906,7 +1014,7 @@ async function runTradingCycle(supabase: any): Promise<{ results: any[], skipped
 
   // Check trading window
   if (!isWithinTradingWindow()) {
-    return { results: [], skipped: true, reason: 'Outside ORB trading window (9:29-10:30 AM ET)' };
+    return { results: [], skipped: true, reason: 'Outside ORB trading window (9:29-11:00 AM ET)' };
   }
 
   // Get active trading configs
@@ -941,13 +1049,13 @@ async function runTradingCycle(supabase: any): Promise<{ results: any[], skipped
       continue;
     }
     
-    // Check max trades per day
+    // Check max trades per day (UPDATED: now 5)
     if (accountInfo.tradesToday >= CONFIG.MAX_TRADES_PER_DAY) {
       console.log(`Max trades reached: ${accountInfo.tradesToday}/${CONFIG.MAX_TRADES_PER_DAY}`);
       continue;
     }
 
-    // Get market regime
+    // Get market regime (with trend filter)
     const regimeData = await getCombinedRegime(config.api_key_id, config.secret_key);
     
     // Get today's ORB stocks from the daily scan (auto-selected)
@@ -957,7 +1065,7 @@ async function runTradingCycle(supabase: any): Promise<{ results: any[], skipped
       .select('symbol')
       .eq('scan_date', today)
       .order('rvol', { ascending: false })
-      .limit(4);
+      .limit(5); // UPDATED: Get top 5 (was 4)
     
     let tickers: string[];
     if (dailyStocks && dailyStocks.length > 0) {
@@ -974,29 +1082,37 @@ async function runTradingCycle(supabase: any): Promise<{ results: any[], skipped
         .select('symbol')
         .eq('scan_date', yesterdayStr)
         .order('rvol', { ascending: false })
-        .limit(4);
+        .limit(5);
       
       if (yesterdayStocks && yesterdayStocks.length > 0) {
         tickers = yesterdayStocks.map((s: { symbol: string }) => s.symbol);
         console.log(`Using yesterday's stocks (today's scan pending): ${tickers.join(', ')}`);
       } else {
         // Ultimate fallback to proven ORB leaders
-        tickers = ['NVDA', 'TSLA'];
+        tickers = ['NVDA', 'TSLA', 'AMD', 'SMCI'];
         console.log(`Using fallback stocks: ${tickers.join(', ')}`);
       }
     }
     
     console.log(`Tickers: ${tickers.join(', ')}`);
-    
-    // Process each ticker by rank
-    for (let i = 0; i < tickers.length && accountInfo.tradesToday + i < CONFIG.MAX_TRADES_PER_DAY; i++) {
+
+    for (let i = 0; i < tickers.length; i++) {
       const ticker = tickers[i];
       const rank = i + 1;
+      
+      // Check if we already have a position in this stock
+      const positions = await getOpenPositions(config.api_key_id, config.secret_key, config.is_paper_trading);
+      const hasPosition = positions.some((p: Position) => p.symbol === ticker);
+      
+      if (hasPosition) {
+        console.log(`[${ticker}] Already have position - skipping`);
+        continue;
+      }
       
       // Get ORB range
       const orbRange = await getORBRange(ticker, config.api_key_id, config.secret_key);
       if (!orbRange) {
-        console.log(`[${ticker}] No ORB range`);
+        console.log(`[${ticker}] No ORB range yet`);
         continue;
       }
       
@@ -1010,7 +1126,7 @@ async function runTradingCycle(supabase: any): Promise<{ results: any[], skipped
       // Get pre-market change
       const premarketChange = await getPremarketChange(ticker, config.api_key_id, config.secret_key);
       
-      // Check for signal
+      // Check for signal (with trend filter)
       const { signal, skipReason } = checkORBSignal(
         orbRange.high,
         orbRange.low,
@@ -1019,7 +1135,8 @@ async function runTradingCycle(supabase: any): Promise<{ results: any[], skipped
         marketData.avgVolume,
         premarketChange,
         regimeData.longsAllowed,
-        regimeData.regime
+        regimeData.regime,
+        regimeData.strongUptrend
       );
       
       // Log ORB levels vs current price
@@ -1034,12 +1151,31 @@ async function runTradingCycle(supabase: any): Promise<{ results: any[], skipped
         continue;
       }
       
-      // Calculate position size
-      const stopLoss = signal === 'long' ? orbRange.low : orbRange.high;
+      // Calculate stop loss - with ATR fallback for tight ranges
       const orbHeight = orbRange.high - orbRange.low;
+      const orbRangePercent = (orbHeight / marketData.price) * 100;
+      
+      let stopDistance = orbHeight;
+      let useATRStop = false;
+      
+      // NEW: ATR-based stop fallback for tight ORB ranges
+      if (orbRangePercent < CONFIG.MIN_ORB_RANGE_PERCENT) {
+        const atr = await getATR(ticker, config.api_key_id, config.secret_key);
+        if (atr && atr > orbHeight) {
+          stopDistance = atr * CONFIG.ATR_STOP_MULTIPLIER;
+          useATRStop = true;
+          console.log(`[${ticker}] ORB range ${orbRangePercent.toFixed(2)}% < ${CONFIG.MIN_ORB_RANGE_PERCENT}% - Using ATR stop: $${stopDistance.toFixed(2)} (1.5x ATR)`);
+        }
+      }
+      
+      const stopLoss = signal === 'long' 
+        ? marketData.price - stopDistance 
+        : marketData.price + stopDistance;
+      
+      // UPDATED: Target is 3x ORB height (was 2x)
       const target = signal === 'long' 
-        ? marketData.price + (2 * orbHeight)
-        : marketData.price - (2 * orbHeight);
+        ? marketData.price + (CONFIG.TARGET_R_MULTIPLE * stopDistance)
+        : marketData.price - (CONFIG.TARGET_R_MULTIPLE * stopDistance);
       
       const spyAboveSMA = regimeData.spyPrice > regimeData.sma200;
       const { shares, riskPercent, isAggressiveBull } = calculatePositionSize(
@@ -1057,7 +1193,7 @@ async function runTradingCycle(supabase: any): Promise<{ results: any[], skipped
         continue;
       }
       
-      console.log(`[${ticker}] SIGNAL: ${signal.toUpperCase()} @ $${marketData.price.toFixed(2)}, ${shares} shares, Risk: ${(riskPercent * 100).toFixed(1)}%`);
+      console.log(`[${ticker}] SIGNAL: ${signal.toUpperCase()} @ $${marketData.price.toFixed(2)}, ${shares} shares, Risk: ${(riskPercent * 100).toFixed(1)}%${useATRStop ? ' (ATR stop)' : ''}, Target: 3R`);
       
       // Execute trade
       const result = await executeTrade(
@@ -1095,6 +1231,7 @@ async function runTradingCycle(supabase: any): Promise<{ results: any[], skipped
         regime: regimeData.regime,
         executed: result.success,
         error: result.error,
+        useATRStop,
       });
       
       if (result.success) {
@@ -1142,6 +1279,9 @@ serve(async (req) => {
   const supabaseUrl = Deno.env.get('SUPABASE_URL')!;
   const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
   const supabase = createClient(supabaseUrl, supabaseServiceKey);
+
+  // NEW: Check and auto-reset daily loss locks on new trading day
+  await checkAndResetDailyLock(supabase);
 
   // Force EOD flatten (for testing or manual trigger)
   if (forceEODFlatten) {
@@ -1330,7 +1470,7 @@ serve(async (req) => {
 
   // Quick check if we're outside trading window entirely
   if (!isWithinTradingWindow()) {
-    console.log('Outside ORB trading window (9:29-10:30 AM ET)');
+    console.log('Outside ORB trading window (9:29-11:00 AM ET)');
     return new Response(
       JSON.stringify({ message: 'Outside trading window', timeET: `${timeInfo.hours}:${timeInfo.mins}` }),
       { headers: { ...corsHeaders, 'Content-Type': 'application/json' } }
