@@ -56,10 +56,87 @@ const formatVolume = (vol: number): string => {
   return vol.toString();
 };
 
+// Calculate trade likelihood based on market conditions and stock quality
+function calculateTradeLikelihood(data: ScanData): { percent: number; label: string; color: string; reasons: string[] } {
+  let score = 50; // Base score
+  const reasons: string[] = [];
+  
+  const isBullish = data.marketRegime === 'bullish';
+  const vixLevel = data.vixLevel || 20;
+  const qualifiedCount = data.stocks.filter(s => !s.isFallback).length;
+  const hasFallbacks = data.stocks.some(s => s.isFallback);
+  
+  // Market regime impact
+  if (isBullish && vixLevel <= 18) {
+    score += 20;
+    reasons.push('Aggressive bull regime (SPY > 200-SMA, VIX low)');
+  } else if (isBullish) {
+    score += 10;
+    reasons.push('Bull regime (SPY > 200-SMA)');
+  } else {
+    score -= 15;
+    reasons.push('Bear/short-only regime reduces opportunities');
+  }
+  
+  // VIX impact
+  if (vixLevel > 30) {
+    score -= 15;
+    reasons.push('Very high VIX — choppy conditions');
+  } else if (vixLevel > 25) {
+    score -= 10;
+    reasons.push('Elevated VIX — reduced position sizing');
+  } else if (vixLevel < 15) {
+    score -= 5;
+    reasons.push('Very low VIX — may lack movement for breakouts');
+  }
+  
+  // Stock quality impact
+  if (hasFallbacks && qualifiedCount === 0) {
+    score -= 20;
+    reasons.push('No stocks qualified — using fallback watchlist');
+  } else if (qualifiedCount >= 5) {
+    score += 15;
+    reasons.push(`${qualifiedCount} stocks qualified — multiple setups available`);
+  } else if (qualifiedCount >= 3) {
+    score += 10;
+    reasons.push(`${qualifiedCount} stocks qualified — decent selection`);
+  } else if (qualifiedCount >= 1) {
+    score += 5;
+    reasons.push(`${qualifiedCount} stock(s) qualified — limited but active`);
+  }
+  
+  // High RVOL stocks boost likelihood
+  const highRvolCount = data.stocks.filter(s => s.rvol >= 2.0).length;
+  if (highRvolCount >= 2) {
+    score += 10;
+    reasons.push(`${highRvolCount} stocks with RVOL ≥ 2.0x — strong volume interest`);
+  }
+  
+  // Big movers boost likelihood
+  const bigMovers = data.stocks.filter(s => Math.abs(s.priceChange) >= 4.0).length;
+  if (bigMovers >= 2) {
+    score += 10;
+    reasons.push(`${bigMovers} stocks with ≥4% moves — elevated activity`);
+  }
+  
+  // Clamp
+  score = Math.max(5, Math.min(95, score));
+  
+  let label: string;
+  let color: string;
+  if (score >= 75) { label = 'HIGH'; color = '#10b981'; }
+  else if (score >= 50) { label = 'MODERATE'; color = '#f59e0b'; }
+  else if (score >= 30) { label = 'LOW'; color = '#ef4444'; }
+  else { label = 'VERY LOW'; color = '#ef4444'; }
+  
+  return { percent: score, label, color, reasons };
+}
+
 const generateEmailHTML = (data: ScanData): string => {
   const isBullish = data.marketRegime === 'bullish';
   const vixLevel = data.vixLevel || 20;
   const isAggressiveBull = isBullish && vixLevel <= 18;
+  const likelihood = calculateTradeLikelihood(data);
   
   // Determine regime display
   let regimeColor = '#10b981';
@@ -122,7 +199,7 @@ const generateEmailHTML = (data: ScanData): string => {
         <!-- Header -->
         <div style="text-align: center; margin-bottom: 24px;">
           <h1 style="color: #fff; margin: 0; font-size: 24px;">☀️ Morning ORB Scan Summary</h1>
-          <p style="color: #888; margin-top: 8px;">${getETDate().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} • 8:00 AM ET</p>
+          <p style="color: #888; margin-top: 8px;">${getETDate().toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })} • 8:30 AM ET</p>
         </div>
 
         <!-- Market Regime Badge -->
@@ -147,6 +224,25 @@ const generateEmailHTML = (data: ScanData): string => {
             <div style="color: #888; font-size: 14px;">
               VIX: <span style="color: ${vixLevel > 25 ? '#ef4444' : vixLevel <= 18 ? '#10b981' : '#fff'}; font-weight: bold;">${vixLevel.toFixed(1)}</span>
             </div>
+          </div>
+        </div>
+
+        <!-- Trade Likelihood -->
+        <div style="background: linear-gradient(135deg, #1a1a1a 0%, #222 100%); border-radius: 12px; padding: 20px; margin-bottom: 20px; border: 2px solid ${likelihood.color}40;">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px;">
+            <div>
+              <p style="color: #888; margin: 0 0 4px 0; font-size: 12px; text-transform: uppercase; letter-spacing: 1px;">Trade Likelihood Today</p>
+              <div style="color: ${likelihood.color}; font-size: 28px; font-weight: bold;">
+                🎯 ${likelihood.percent}% — ${likelihood.label}
+              </div>
+            </div>
+          </div>
+          <!-- Likelihood bar -->
+          <div style="background: #333; border-radius: 8px; height: 8px; margin-bottom: 12px; overflow: hidden;">
+            <div style="background: ${likelihood.color}; height: 100%; width: ${likelihood.percent}%; border-radius: 8px; transition: width 0.3s;"></div>
+          </div>
+          <div style="color: #888; font-size: 13px;">
+            ${likelihood.reasons.map(r => `• ${r}`).join('<br>')}
           </div>
         </div>
 

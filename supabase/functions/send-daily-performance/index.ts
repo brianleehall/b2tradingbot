@@ -107,7 +107,7 @@ function generatePerformanceHTML(trades: TradeLog[], date: string, accountEquity
     <!-- Header -->
     <div style="background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%); border-radius: 12px; padding: 24px; margin-bottom: 20px; border: 1px solid #333;">
       <h1 style="color: #ffffff; margin: 0 0 8px 0; font-size: 24px;">🏁 End of Session Report</h1>
-      <p style="color: #888; margin: 0; font-size: 14px;">${date} • 11:30 AM ET</p>
+      <p style="color: #888; margin: 0; font-size: 14px;">${date} • 4:30 PM ET</p>
     </div>
 
     ${noTrades ? `
@@ -196,7 +196,7 @@ function generatePerformanceHTML(trades: TradeLog[], date: string, accountEquity
     <div style="background: #10b98115; border: 1px solid #10b98140; border-radius: 8px; padding: 16px; margin-bottom: 20px;">
       <h3 style="color: #10b981; font-size: 14px; margin: 0 0 8px 0;">🔮 Tomorrow's Scan</h3>
       <p style="color: #888; margin: 0; font-size: 13px;">
-        Fresh ORB stock scan will run tonight at midnight. Check your 8:00 AM email for tomorrow's trading candidates.
+        Fresh ORB stock scan runs each morning. Check your 8:30 AM email for tomorrow's trading candidates and trade likelihood.
       </p>
     </div>
 
@@ -263,6 +263,11 @@ const handler = async (req: Request): Promise<Response> => {
       );
     }
 
+    // Get all users with trading configs (including API keys for equity lookup)
+    const { data: fullConfigs, error: fullConfigError } = await supabase
+      .from('trading_configurations')
+      .select('user_id, api_key_id, secret_key, is_paper_trading');
+
     const emailsSent: string[] = [];
 
     for (const config of configs) {
@@ -292,6 +297,28 @@ const handler = async (req: Request): Promise<Response> => {
         continue;
       }
 
+      // Fetch account equity from Alpaca
+      let accountEquity: number | undefined;
+      const userConfig = fullConfigs?.find((c: any) => c.user_id === config.user_id);
+      if (userConfig?.api_key_id && userConfig?.secret_key) {
+        try {
+          const baseUrl = userConfig.is_paper_trading ? 'https://paper-api.alpaca.markets' : 'https://api.alpaca.markets';
+          const accountRes = await fetch(`${baseUrl}/v2/account`, {
+            headers: {
+              'APCA-API-KEY-ID': userConfig.api_key_id,
+              'APCA-API-SECRET-KEY': userConfig.secret_key,
+            },
+          });
+          if (accountRes.ok) {
+            const accountData = await accountRes.json();
+            accountEquity = parseFloat(accountData.equity);
+            console.log(`[SESSION-EMAIL] Account equity for ${config.user_id}: $${accountEquity?.toLocaleString()}`);
+          }
+        } catch (e) {
+          console.error(`[SESSION-EMAIL] Failed to fetch equity for ${config.user_id}:`, e);
+        }
+      }
+
       const formattedDate = etDate.toLocaleDateString('en-US', { 
         weekday: 'long', 
         year: 'numeric', 
@@ -300,7 +327,7 @@ const handler = async (req: Request): Promise<Response> => {
       });
 
       // Send email even if no trades (show "No trades today" message)
-      const html = generatePerformanceHTML(trades || [], formattedDate);
+      const html = generatePerformanceHTML(trades || [], formattedDate, accountEquity);
       const tradeCount = trades?.length || 0;
       const subjectEmoji = tradeCount > 0 ? '🏁' : '😴';
       const subjectText = tradeCount > 0 ? `${tradeCount} trades today` : 'No trades today';
