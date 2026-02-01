@@ -152,6 +152,39 @@ export type Database = {
         }
         Relationships: []
       }
+      trading_state: {
+        Row: {
+          created_at: string
+          is_locked: boolean
+          lock_date: string | null
+          lock_reason: string | null
+          manual_stop: boolean
+          trades_today: number
+          updated_at: string
+          user_id: string
+        }
+        Insert: {
+          created_at?: string
+          is_locked?: boolean
+          lock_date?: string | null
+          lock_reason?: string | null
+          manual_stop?: boolean
+          trades_today?: number
+          updated_at?: string
+          user_id: string
+        }
+        Update: {
+          created_at?: string
+          is_locked?: boolean
+          lock_date?: string | null
+          lock_reason?: string | null
+          manual_stop?: boolean
+          trades_today?: number
+          updated_at?: string
+          user_id?: string
+        }
+        Relationships: []
+      }
       user_orb_tickers: {
         Row: {
           id: string
