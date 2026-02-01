@@ -811,10 +811,28 @@ async function runAutoFlatten(supabase: any, reason: string): Promise<{ flattene
   const positionsOverrideByUser = (supabase as any)?.__positionsOverrideByUser as Record<string, Position[]> | undefined;
   const simulateCloseOnly = Boolean((supabase as any)?.__simulateCloseOnly);
 
-  // Get all active trading configs
-  const { data: configs, error } = configsOverride
-    ? ({ data: configsOverride, error: null } as any)
-    : await supabase.rpc('get_active_trading_configs');
+  // CRITICAL FIX: Use get_all_trading_configs for EOD flatten
+  // Previously used get_active_trading_configs which SKIPS users who have auto_trading_enabled=false
+  // This caused positions to stay open overnight when daily loss limit disabled auto trading
+  let configs: TradingConfig[] | null = null;
+  let error: any = null;
+
+  if (configsOverride) {
+    configs = configsOverride;
+  } else {
+    // Try get_all_trading_configs first (includes disabled auto-traders)
+    const allResult = await supabase.rpc('get_all_trading_configs');
+    if (allResult.error || !allResult.data || allResult.data.length === 0) {
+      // Fallback to active-only if the new function doesn't exist yet
+      console.log('[FLATTEN] get_all_trading_configs unavailable, falling back to active configs');
+      const activeResult = await supabase.rpc('get_active_trading_configs');
+      configs = activeResult.data;
+      error = activeResult.error;
+    } else {
+      configs = allResult.data;
+      console.log(`[FLATTEN] Found ${allResult.data.length} trading configs (ALL users, regardless of auto_trading_enabled)`);
+    }
+  }
   
   if (error || !configs || configs.length === 0) {
     console.log('[FLATTEN] No active trading configs found');
@@ -923,7 +941,17 @@ async function runDynamicFlatten(supabase: any): Promise<{ flattened: number; ex
     return { flattened: result.flattened, extended: 0 };
   }
   
-  const { data: configs, error } = await supabase.rpc('get_active_trading_configs');
+  // Use get_all_trading_configs for flatten operations (positions must close regardless of auto_trading_enabled)
+  let configs: TradingConfig[] | null = null;
+  const allResult = await supabase.rpc('get_all_trading_configs');
+  if (allResult.error || !allResult.data) {
+    const activeResult = await supabase.rpc('get_active_trading_configs');
+    configs = activeResult.data;
+    if (activeResult.error) return { flattened: 0, extended: 0 };
+  } else {
+    configs = allResult.data;
+  }
+  const error = null;
   
   if (error || !configs || configs.length === 0) {
     return { flattened: 0, extended: 0 };
