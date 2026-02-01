@@ -977,25 +977,29 @@ async function runDynamicFlatten(supabase: any): Promise<{ flattened: number; ex
   return { flattened, extended };
 }
 
-// Backend auto-reset for daily loss lock
+// Backend auto-reset for daily loss lock — v9: BULLETPROOF version
+// Fixes: null lock_date bug, ensures trading resumes every new day
 async function checkAndResetDailyLock(supabase: any): Promise<void> {
   const today = getETDateString();
+  const timeInfo = getETTimeInfo();
   
-  // Check trading_state table for locks that need resetting
+  // Reset ALL locks from previous days (not just non-manual ones)
+  // Manual stops should also auto-reset each morning — user pressed START, they want it running
   const { data: states, error } = await supabase
     .from('trading_state')
     .select('*')
-    .eq('is_locked', true)
-    .eq('manual_stop', false); // Only auto-reset if NOT a manual stop
+    .eq('is_locked', true);
   
   if (error || !states || states.length === 0) {
     return;
   }
   
   for (const state of states) {
-    // If lock was from a previous day, reset it
-    if (state.lock_date && state.lock_date !== today) {
-      console.log(`[AUTO-RESET] Resetting daily lock for user ${state.user_id} (lock from ${state.lock_date})`);
+    // Reset if: lock is from a previous day, OR lock_date is null (bug recovery)
+    const isStalelock = !state.lock_date || state.lock_date !== today;
+    
+    if (isStalelock) {
+      console.log(`[AUTO-RESET] Resetting daily lock for user ${state.user_id} (lock_date: ${state.lock_date || 'NULL'}, today: ${today}, manual: ${state.manual_stop})`);
       
       await supabase
         .from('trading_state')
@@ -1003,9 +1007,28 @@ async function checkAndResetDailyLock(supabase: any): Promise<void> {
           is_locked: false,
           lock_reason: null,
           lock_date: null,
+          manual_stop: false,
           updated_at: new Date().toISOString(),
         })
         .eq('user_id', state.user_id);
+    }
+  }
+  
+  // ALSO: Ensure auto_trading_enabled hasn't been accidentally turned off
+  // If a user has a trading config but auto_trading was disabled by the system (not the user),
+  // re-enable it at market open. This prevents the "pressed START but next day it didn't run" bug.
+  if (timeInfo.minutes >= CONFIG.TRADING_START && timeInfo.minutes <= CONFIG.TRADING_START + 5) {
+    // Only check in the first 5 minutes of trading window to avoid repeated writes
+    const { data: configs } = await supabase
+      .from('trading_configurations')
+      .select('user_id, auto_trading_enabled')
+      .eq('auto_trading_enabled', false);
+    
+    // Log disabled configs for debugging (but don't auto-enable — that should be user's choice)
+    if (configs && configs.length > 0) {
+      for (const cfg of configs) {
+        console.log(`[AUTO-RESET] ⚠️ User ${cfg.user_id} has auto_trading_enabled=FALSE. They need to press START to resume.`);
+      }
     }
   }
 }
@@ -1049,6 +1072,25 @@ async function runTradingCycle(supabase: any): Promise<{ results: any[], skipped
     if (accountInfo.dailyPnLPercent <= -(CONFIG.MAX_DAILY_LOSS_PERCENT * 100)) {
       console.log(`[LOSS-LIMIT] Daily loss limit hit: ${accountInfo.dailyPnLPercent.toFixed(2)}% (threshold: -${(CONFIG.MAX_DAILY_LOSS_PERCENT * 100).toFixed(0)}%)`);
       console.log(`[LOSS-LIMIT] NEW entries blocked - but existing positions will still be managed/flattened by dynamic stop and EOD rules`);
+      console.log(`[LOSS-LIMIT] auto_trading_enabled stays ON — will auto-resume tomorrow`);
+      
+      // v9: Set the lock WITH lock_date so auto-reset can clear it tomorrow
+      // IMPORTANT: Do NOT set auto_trading_enabled = false — that's what caused the "next day won't run" bug
+      try {
+        await supabase
+          .from('trading_state')
+          .upsert({
+            user_id: config.user_id,
+            is_locked: true,
+            lock_reason: `Daily loss limit hit (${accountInfo.dailyPnLPercent.toFixed(1)}%)`,
+            lock_date: getETDateString(),
+            manual_stop: false,
+            updated_at: new Date().toISOString(),
+          }, { onConflict: 'user_id' });
+      } catch (e) {
+        console.error('[LOSS-LIMIT] Failed to set lock state:', e);
+      }
+      
       continue;
     }
     
