@@ -35,45 +35,44 @@ interface ScanResult {
 // Crypto pairs to scan
 const CRYPTO_PAIRS = ['BTCUSD', 'ETHUSD'];
 
-// Expanded scan list - high-volatility stocks known for ORB setups
-// UPDATED: Added more liquid large-cap stocks per academic research
+// v9: Trimmed scan list — removed consistent losers from 12-month backtest
+// REMOVED: ZS (-$9.8K), SHOP (-$9.4K), GS (-$7.3K), DDOG (-$6.3K), MA (-$6.2K)
+// Also removed low-volume/illiquid names that rarely qualify
 const SCAN_STOCKS = [
-  // Tech/Semis
-  'NVDA', 'AMD', 'SMCI', 'ARM', 'AVGO', 'MRVL', 'MU', 'INTC',
+  // Tech/Semis — PROVEN ORB winners
+  'NVDA', 'AMD', 'SMCI', 'ARM', 'AVGO', 'MRVL', 'MU',
   // Crypto/Blockchain
-  'MARA', 'RIOT', 'MSTR', 'HUT', 'COIN', 'CLSK', 'BITF',
-  // Quantum/AI
-  'IONQ', 'RGTI', 'QUBT', 'SOUN', 'PLTR',
+  'MARA', 'RIOT', 'MSTR', 'COIN', 'CLSK',
+  // AI/High-beta tech
+  'PLTR', 'SOUN',
   // EV
-  'TSLA', 'RIVN', 'LCID', 'NIO', 'XPEV', 'LI',
+  'TSLA',
   // Fintech
-  'AFRM', 'UPST', 'SOFI', 'HOOD',
-  // Other high-beta
-  'PLUG', 'GSAT', 'META', 'AAPL', 'GOOGL', 'AMZN',
-  // NEW: Large-cap liquid stocks (best ORB candidates per Zarattini/Barbon/Aziz 2024)
-  'ORCL', 'CRM', 'NFLX', 'BA', 'DIS', 'JPM', 'GS', 'V', 'MA',
-  'ABNB', 'UBER', 'SHOP', 'NET', 'DDOG', 'ZS',
+  'SOFI', 'HOOD',
+  // Large-cap liquid (proven ORB candidates)
+  'META', 'AAPL', 'GOOGL', 'AMZN',
+  'ORCL', 'CRM', 'NFLX', 'BA', 'DIS', 'JPM',
+  'ABNB', 'UBER', 'NET', 'V',
 ];
 
 // 4 fallback stocks when zero qualify - "Proven ORB Leaders"
 const FALLBACK_STOCKS = ['NVDA', 'TSLA', 'AMD', 'SMCI'];
 const MIN_FALLBACK_STOCKS = 4;
-const MAX_STOCKS = 8;
+const MAX_STOCKS = 5; // REDUCED: 5 (was 8) — quality over quantity
 
 // Float data in millions - for informational purposes only (no longer used to filter)
+// v9: Trimmed to match SCAN_STOCKS list
 const STOCK_FLOAT: Record<string, number> = {
   'SMCI': 58, 'ARM': 102, 'COIN': 115,
-  'MARA': 85, 'RIOT': 95, 'MSTR': 110, 'HUT': 250, 'CLSK': 75,
-  'IONQ': 42, 'RGTI': 35, 'QUBT': 28, 'SOUN': 55, 'AFRM': 95,
-  'UPST': 78, 'PLUG': 110, 'SOFI': 98, 'HOOD': 88, 'RIVN': 130,
-  'XPEV': 90, 'LI': 95, 'NIO': 120, 'GSAT': 80, 'BITF': 65,
+  'MARA': 85, 'RIOT': 95, 'MSTR': 110, 'CLSK': 75,
+  'SOUN': 55, 'SOFI': 98, 'HOOD': 88,
   // Large-cap stocks
   'NVDA': 2460, 'TSLA': 3180, 'AMD': 1620, 'META': 2570, 
   'AAPL': 15200, 'AVGO': 466, 'MRVL': 865, 'MU': 1100, 
-  'INTC': 4250, 'PLTR': 2280, 'LCID': 1900, 'GOOGL': 12000, 'AMZN': 10500,
+  'PLTR': 2280, 'GOOGL': 12000, 'AMZN': 10500,
   'ORCL': 2700, 'CRM': 970, 'NFLX': 430, 'BA': 600, 'DIS': 1800,
-  'JPM': 2900, 'GS': 320, 'V': 1650, 'MA': 930, 'ABNB': 600,
-  'UBER': 2000, 'SHOP': 1250, 'NET': 330, 'DDOG': 320, 'ZS': 150,
+  'JPM': 2900, 'V': 1650, 'ABNB': 600,
+  'UBER': 2000, 'NET': 330,
 };
 
 // UPDATED CRITERIA - Loosened per academic research and QuantConnect studies

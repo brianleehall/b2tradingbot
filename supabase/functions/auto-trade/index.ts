@@ -40,12 +40,15 @@ const CONFIG = {
   REENTRY_END: 10 * 60 + 5,    // 10:05 AM
   EOD_FLATTEN: 16 * 60,        // 4:00 PM - Force flatten all positions
   
-  // Risk management - UPDATED
+  // Risk management - UPDATED (v9: quality over quantity)
   TIER1_RISK: 0.02,            // 2% for #1 ranked stock (default)
   TIER1_AGGRESSIVE_RISK: 0.03, // 3% for #1 in aggressive bull mode
   TIER2_RISK: 0.01,            // 1% for #2-4
-  MAX_TRADES_PER_DAY: 5,       // UPDATED: 5 (was 3 - QuantConnect trades up to 20)
+  MAX_TRADES_PER_DAY: 3,       // REDUCED: 3 (was 5 - focus on quality setups)
   MAX_DAILY_LOSS_PERCENT: 0.03, // -3% daily stop
+  
+  // Regime filter - UPDATED v9: skip ALL trading in bear regimes
+  SKIP_BEAR_REGIME: true,      // NEW: No trades when SPY < 200-SMA
   
   // Crypto allocation
   CRYPTO_MAX_PORTFOLIO_PERCENT: 0.20, // Max 20% of portfolio for crypto
@@ -1058,6 +1061,14 @@ async function runTradingCycle(supabase: any): Promise<{ results: any[], skipped
     // Get market regime (with trend filter)
     const regimeData = await getCombinedRegime(config.api_key_id, config.secret_key);
     
+    // v9: Skip ALL trading in bear/elevated_vol regimes
+    if (CONFIG.SKIP_BEAR_REGIME && (regimeData.regime === 'bear' || regimeData.regime === 'elevated_vol')) {
+      console.log(`[REGIME-SKIP] ${regimeData.regime.toUpperCase()} regime detected — SKIPPING all trades today`);
+      console.log(`[REGIME-SKIP] SPY: $${regimeData.spyPrice.toFixed(2)} vs 200-SMA: $${regimeData.sma200.toFixed(2)}, VIX: ${regimeData.vixLevel.toFixed(1)}`);
+      console.log(`[REGIME-SKIP] Backtest showed -$22,800 in bear trades. Cash is a position.`);
+      continue;
+    }
+    
     // Get today's ORB stocks from the daily scan (auto-selected)
     const today = new Date().toISOString().split('T')[0];
     const { data: dailyStocks, error: stocksError } = await supabase
@@ -1065,7 +1076,7 @@ async function runTradingCycle(supabase: any): Promise<{ results: any[], skipped
       .select('symbol')
       .eq('scan_date', today)
       .order('rvol', { ascending: false })
-      .limit(5); // UPDATED: Get top 5 (was 4)
+      .limit(3); // REDUCED: Top 3 only (was 5 - quality over quantity)
     
     let tickers: string[];
     if (dailyStocks && dailyStocks.length > 0) {
