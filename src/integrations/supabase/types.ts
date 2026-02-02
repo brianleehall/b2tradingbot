@@ -225,6 +225,18 @@ export type Database = {
           user_id: string
         }[]
       }
+      get_all_trading_configs: {
+        Args: never
+        Returns: {
+          api_key_id: string
+          auto_trading_enabled: boolean
+          id: string
+          is_paper_trading: boolean
+          secret_key: string
+          selected_strategy: string
+          user_id: string
+        }[]
+      }
       get_decrypted_trading_config: {
         Args: { p_user_id: string }
         Returns: {
