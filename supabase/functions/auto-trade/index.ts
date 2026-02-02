@@ -263,7 +263,8 @@ async function getCombinedRegime(apiKeyId: string, secretKey: string): Promise<{
     return { spyPrice, sma200, sma50, vixLevel, regime, longsAllowed, strongUptrend };
   } catch (error) {
     console.error('Error fetching regime:', error);
-    return { spyPrice: 0, sma200: 0, sma50: 0, vixLevel: 20, regime: 'bull', longsAllowed: true, strongUptrend: false };
+    // SAFETY: If regime check fails, default to bear (no trading) — don't risk trades on bad data
+    return { spyPrice: 0, sma200: 0, sma50: 0, vixLevel: 30, regime: 'bear', longsAllowed: false, strongUptrend: false };
   }
 }
 
